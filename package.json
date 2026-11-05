@@ -1,0 +1,12 @@
+{
+  "name": "pbz-quest-guard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "ooz-wasm": "2.0.0"
+  }
+}
