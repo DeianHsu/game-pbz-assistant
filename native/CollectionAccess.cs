@@ -8,13 +8,22 @@ namespace PBZ.Native
     internal sealed class CollectionAccess
     {
         readonly Progress p;
+        readonly ILookup<string, string> loadedLayers, unloadedLayers;
         static readonly Row Guides = Progress.Guides;
+        const string WinterLayer = "A03_0_FuJiZhiLin_Winter", SummerLayer = "A03_0_FuJiZhiLin_Summer";
+        const string GraveLayer = "LD_GP_DuanHunYa_Grave";
         static readonly Row Labels = Data.Make("done", "已收集", "ready", "已知前置满足", "locked", "暂不可取", "route", "本区流程收集", "unknown", "解锁待核实");
         static readonly HashSet<string> Ice = new HashSet<string> {
             "bell:Bell_LZSJ_017", "bell:Bell_LZSJ_018", "bell:Bell_LZSJ_019", "blackstone:5", "blackstone:6", "amber:4", "amber:6",
             "accessory:AC_Chaos", "accessory:AC_ResistIce", "medicine:Medicine_AdditionalRecover"
         };
-        public CollectionAccess(Progress progress) { p = progress; }
+        public CollectionAccess(Progress progress)
+        {
+            p = progress;
+            var pipeline = p.Slot.Get("EventPipeline");
+            loadedLayers = SavedLayers(pipeline.Get("LoadedDataLayer"));
+            unloadedLayers = SavedLayers(pipeline.Get("UnLoadedDataLayer"));
+        }
         public static Row Result(string state, string reason, string source = "")
         {
             return Data.Make("state", state, "label", Labels.S(state), "reason", reason, "source", source);
@@ -29,6 +38,33 @@ namespace PBZ.Native
         {
             return Result(satisfied == true ? "ready" : satisfied == false ? "locked" : "unknown",
                 satisfied == true ? ready : satisfied == false ? blocked : "存档中的前置记录无法确认。" + blocked, source);
+        }
+        static ILookup<string, string> SavedLayers(object layers)
+        {
+            return layers.Dict().SelectMany(pair => (pair.Value is object[] ? pair.Value.List() : new[] { pair.Value })
+                .OfType<string>().Select(path => new { World = pair.Key, Name = path.Substring(path.LastIndexOf('/') + 1).Split('.')[0] }))
+                .ToLookup(layer => layer.World, layer => layer.Name, StringComparer.OrdinalIgnoreCase);
+        }
+        bool? SavedLayer(string world, string layer)
+        {
+            bool loaded = loadedLayers[world].Contains(layer, StringComparer.OrdinalIgnoreCase);
+            bool unloaded = unloadedLayers[world].Contains(layer, StringComparer.OrdinalIgnoreCase);
+            return loaded == unloaded ? (bool?)null : loaded;
+        }
+        bool? Frozen(string world)
+        {
+            bool? tag = p.Tag("fjzl.风雪数据层.激活"), saved = SavedLayer(world, WinterLayer);
+            return tag == true || saved == true ? true : saved ?? tag;
+        }
+        bool? LayerActive(string world, SceneLayers.Layer layer)
+        {
+            bool? active;
+            if (layer.Name == WinterLayer) active = Frozen(world);
+            else if (layer.Name == SummerLayer) active = !Frozen(world);
+            else if (layer.Name == GraveLayer)
+                active = SavedLayer(world, layer.Name) ?? p.Tag("xsd.陆解元.传送挖坟");
+            else active = SavedLayer(world, layer.Name) ?? layer.InitiallyActive;
+            return layer.Parent == null ? active : All(active, LayerActive(world, layer.Parent));
         }
 
         KeyValuePair<string, bool?> Check(string id)
@@ -104,6 +140,15 @@ namespace PBZ.Native
                 return route.With("needs", new[] { "backstreet", "wuXuan" }.Concat(route.Strings("needs")).Distinct().ToArray());
             return route;
         }
+        Row AreaRoute(string map)
+        {
+            if (map == "meigu_yiji") return Route(Data.Make("needs", new[] { "masks" }, "action", "可进入幻术师遗迹。", "source", Source("lake")));
+            if (map == "dengdingshandao" && Pipa != true)
+                return Gate(Pipa, "先修复幻术琵琶，才能穿过梅谷湖雾门进入枷笼山。", "", Source("mountain"));
+            if (map == "zhengdaodaying" && Has("K_03002") != true)
+                return Gate(Has("K_03002"), "需正道大营外门钥匙打开入口。", "", Source("lu"));
+            return null;
+        }
         public Row ForPoint(Row point, bool regionOpen)
         {
             if (point.S("state") == "done") return Result("done", "该点已计入已收集。");
@@ -113,15 +158,12 @@ namespace PBZ.Native
             bool nearby = point.Rows("nearest").FirstOrDefault().Flag("activated");
             Row route = PointRoute(point);
             if (route != null) return Route(route);
-            if (map == "meigu_yiji") return Route(Data.Make("needs", new[] { "masks" }, "action", "可进入幻术师遗迹。", "source", Source("lake")));
-            if (map == "dengdingshandao" && Pipa != true)
-                return Gate(Pipa, "先修复幻术琵琶，才能穿过梅谷湖雾门进入枷笼山。", "", Source("mountain"));
+            route = AreaRoute(map);
+            if (route != null) return route;
             if (map == "fujizhilin" && Ice.Contains(key))
                 return Gate(p.Tag("fjzl.风雪数据层.激活"), "需等血色森林冰封后回访杀气塔。", "冰封门槛已满足，可以回访杀气塔。", Source("forest"));
             if (map == "xigu" && (id == "Bell_QingDaoFu" || id == "F_12001"))
                 return Gate(Has("K_04902"), "需完成梦差幻境三处传送门，取得人偶舌头。", "可回红房子开门。", Source("valley"));
-            if (map == "zhengdaodaying" && Has("K_03002") != true)
-                return Gate(Has("K_03002"), "需正道大营外门钥匙打开入口。", "", Source("lu"));
             string condition = point.S("condition");
             if (condition.StartsWith("BPF_BuMieXiaDan_Memory_", StringComparison.Ordinal))
                 return Route(Data.Make("needs", new[] { "heroic" }, "action", "持破碎的侠胆，在异变前帮助正道高手解脱并调查花瓣。", "quest", "BuMieXiaDan", "source", Source("camp")));
@@ -149,6 +191,102 @@ namespace PBZ.Native
             string source = Guides.Get("physicalRouteSources").S(map);
             return physical && source != "" ? Result("route", "可随本区路线探索，具体通路未逐门确认。", source)
                 : Result("unknown", "只确认尚未收集，此点的通路或剧情条件还未核实。");
+        }
+
+        Row PickupFlow(Row point)
+        {
+            var flow = point.Get("flow") as Row;
+            switch (flow.S("id"))
+            {
+                case "":
+                case "BPF_InteractAddTagPrefab":
+                case "BPF_SiDaSheWu":
+                case "BPF_YaBaRenOuTuZhi":
+                case "BPF_WeiShuMingDeXin":
+                    return null; // These graphs handle interactions with the spawned pickup.
+                case "BPF_NanMin_Drop":
+                    return Gate(p.Tag("xg.难民.死亡"), "等悲泣溪谷的难民剧情推进到难民死亡。", "难民死亡事件已记录，可回开端之地检查。", Source("valley"));
+                case "BPF_Leader_Reading_Visible":
+                    return Gate(Any(p.Tag("xg.蓝剑客.完成任务"), p.Tag("quest.一个不留.营地变怪")),
+                        "先推进蓝衣剑客的任务，或等「一个不留」推进至营地异变。", "对应剧情已发生，可检查蓝衣剑客留下的读物。", Source("valley"));
+                case "BPF_YiShiChenAi_Visibility":
+                    return Gate(Any(p.Tag("ljc.受伤的飞贼.弹出道具"), p.Tag("ljc.受伤的飞贼.死后调查结束")),
+                        "在通向庞镇的密道继续受伤飞贼的剧情，并调查遗留物。", "存档已记录飞贼遗留物的触发。", Source("lu"));
+                case "BPF_Rubbish_BaoDanKe":
+                    return Gate(p.Tag("ddsd.爆弹客.死亡"), "先击败枷笼山囚笼道的爆弹客。", "爆弹客已击败，可检查囚笼道的掉落。", Source("mountain"));
+                case "BPF_VisibleInteractPrefab":
+                    if (flow.S("visibleTag") == "bsmw.剑偶.死亡" && !flow.Flag("defaultVisible"))
+                        return Gate(p.Tag("bsmw.剑偶.死亡"), "先击败正道大营幽禁之地的剑偶。", "剑偶已击败，可回大营瀑布后方检查。", Source("camp"));
+                    if (flow.S("visibleTag") == "dhs.决战前Npc.弦者" && flow.Flag("defaultVisible"))
+                        return Gate(!p.Tag("dhs.决战前Npc.弦者"), "决战前的剧情已切换，此物件在当前场景中隐藏。",
+                            "此物件可在决战前的场景中拾取。", Source("final"));
+                    break;
+            }
+            return Result("unknown", "点位绑定了单独的剧情互动，具体触发条件仍待核实。");
+        }
+
+        public Row ForPickup(Row point, string state, bool regionOpen, Row mapped)
+        {
+            if (state == "done")
+                return Result("done", point.S("pickupType") == "宝箱" ? "存档记录此宝箱已打开。" : "存档记录此拾取物已处理。");
+            string map = point.S("rawMap").ToLowerInvariant(), world = point.S("world"), loot = point.S("lootRow");
+            Row area = AreaRoute(map);
+            if (area != null && area.S("state") != "ready") return area;
+
+            var layers = point.Get("layers") as SceneLayers.Layer[];
+            Row prerequisite = null;
+            // The ice route includes objects physically inside the tower, whose cells use the main scene layer.
+            if (map == "fujizhilin" && loot.StartsWith("ErCijingLin.", StringComparison.OrdinalIgnoreCase))
+            {
+                bool graveChest = loot == "ErCijingLin.5Medi004";
+                prerequisite = Gate(Frozen(world), "从青蛇屋进入戏梦山庄，等血色森林下雪后再回访。",
+                    graveChest ? "冰封已触发。宝箱在遗冢地铃铛的地图左下方，直线约 48 米。"
+                        : "冰封已触发，可从镜林入口回访对应点位。",
+                    graveChest ? "https://pbz.gg/zh-hans/map/?pin=chest-e1488f2c&region=crimson-forest" : Source("forest"));
+            }
+            else if (map == "xigu" && (loot.StartsWith("Xigu.HongFangZi.", StringComparison.OrdinalIgnoreCase) ||
+                new[] { "Xigu.R_12001", "Xigu.R_12003", "Xigu.R_12004", "Xigu.R_12006" }.Contains(loot)))
+                prerequisite = Gate(Has("K_04902"), "完成「溪谷深处」的幻境，取得人偶舌头后再开红房子大门。",
+                    "已取得人偶舌头，可进入红房子及清道夫豢养处。", "https://www.gamersky.com/handbook/202611/2241551.shtml");
+            else if (map == "fujizhilin" && loot.StartsWith("FuJiZhiLin.juchui", StringComparison.OrdinalIgnoreCase))
+                prerequisite = Gate(All(Has("K_02005"), Has("JinGua", "phantom", true)),
+                    "需血色森林坑道开关和长柄金瓜，才能进入亡命徒陷阱地下的隐藏段。",
+                    "从亡命徒陷阱下坑道，用长柄金瓜砸开可破坏的地板。", "https://www.gamersky.com/handbook/202611/2239882.shtml");
+            else if (map == "xigu" && loot.StartsWith("Xigu.Extra.", StringComparison.OrdinalIgnoreCase))
+                prerequisite = Gate(Has("TigerCannon", "phantom", true), "等戏梦山庄取得虎炮，再回悲泣溪谷龙柱炸开墙。",
+                    "从悲泣溪谷龙柱用虎炮开路，探索鸽饲料宝箱附近。", "https://www.gamersky.com/handbook/202611/2241946_5.shtml");
+            else if (map == "fujizhilin" && loot == "FuJiZhiLin.hupao")
+                prerequisite = Gate(Has("TigerCannon", "phantom", true), "等戏梦山庄取得虎炮，再回血色森林轰开隐藏墙。",
+                    "从悬崖山舍走地下通道，用虎炮炸开墙后检查材料。", "https://www.pixelforgeguides.com/phantom-blade-zero-walkthrough-collectibles.html");
+            else if (map == "houjie" && loot == "HouJie.extra.006")
+                prerequisite = Route(Data.Make("needs", new[] { "lionDead", "pipa" }, "action", "从尊主封印地上山，驱散屏障后检查瑞狮火球宝箱附近。",
+                    "source", Source("pang")));
+            else if (layers != null && layers.Any(layer => layer.Name == GraveLayer))
+                prerequisite = Gate(LayerActive(world, layers.First(layer => layer.Name == GraveLayer)),
+                    "推进「小翠」，在最后的正道营地与陆解元对话，同意安葬家人进入墓区。",
+                    "墓区已开放，可在安葬地点附近拾取。", "https://www.gamersky.com/handbook/202611/2240314.shtml");
+            else if (map == "houjie" && !p.Reached("HouJie"))
+                prerequisite = Route(Data.Make("needs", new[] { "backstreet" }, "action", "可沿后街路线探索。", "source", Source("pang")));
+            else if (map == "duanhunshan" || map == "duanhunya")
+            {
+                if (!p.Reached("DuanHunShan") && !p.Reached("DuanHunYa"))
+                    prerequisite = Gate(Has("TigerCannon", "phantom", true), "击败雷当取得虎炮，轰开戏梦山庄灵堂尽头的石墙。",
+                        "已持有虎炮，前往灵堂尽头开路。", Source("final"));
+            }
+            if (prerequisite != null && prerequisite.S("state") != "ready") return prerequisite;
+            if (!regionOpen) return Result("locked", "此子区尚未开放，推进主线后再处理。");
+            var known = mapped.Get("access") as Row;
+            if (known.S("state") == "locked") return known;
+            if (layers == null) return Result("unknown", "这一点的场景分区未能读取，暂时无法核对开放条件。");
+            if (layers.Length > 0)
+            {
+                bool? active = Any(layers.Select(layer => LayerActive(world, layer)).ToArray());
+                if (active != true) return Gate(active, "存档显示该点所在的场景分区尚未启用。", "", "");
+            }
+            Row flow = PickupFlow(point);
+            if (flow != null && flow.S("state") != "ready") return flow;
+            return prerequisite ?? flow ?? area ?? (known.S("state") == "ready" ? known : Result("route",
+                "点位所在场景已开放，可按本区路线寻找。途中若有门锁或机关，请按游戏现场确认。"));
         }
     }
 }

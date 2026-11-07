@@ -145,7 +145,7 @@ namespace PBZ.Native
     {
         readonly string file;
         readonly byte[] toc;
-        readonly int blockSize, offsetsStart, blocksStart;
+        readonly int blockSize, offsetsStart, blocksStart, chunkCount;
         readonly ulong partitionSize;
         readonly bool encrypted;
         readonly string[] methods;
@@ -157,6 +157,7 @@ namespace PBZ.Native
             if (Encoding.ASCII.GetString(toc, 0, 16) != "-==--==--==--==-" || Read(20) != 144 || Read(32) != 12)
                 throw new InvalidDataException("游戏资源版本不受支持。");
             int count = Read(24), blocks = Read(28), methodCount = Read(36), methodLength = Read(40), flags = toc[80];
+            chunkCount = count;
             blockSize = Read(44);
             partitionSize = BitConverter.ToUInt64(toc, 88);
             encrypted = (flags & 2) != 0;
@@ -192,12 +193,69 @@ namespace PBZ.Native
             if (dirs.Length > 0) walk(0, "", 0);
         }
         int Read(int position) { return BitConverter.ToInt32(toc, position); }
-        public byte[] ReadFile(string name)
+
+        // UE5 IoStore container header: package IDs and relative import-array views.
+        public IEnumerable<KeyValuePair<string, string[]>> PackagesImporting(IEnumerable<string> packages, IEnumerable<string> assets)
+        {
+            var imports = assets.ToDictionary(name => PackageId(Files[name]), name => Path.GetFileNameWithoutExtension(name));
+            var wanted = packages.ToDictionary(name => PackageId(Files[name]));
+            int header = Enumerable.Range(0, chunkCount).Single(index => toc[144 + index * 12 + 11] == 6);
+            byte[] bytes = ReadChunk(header);
+            var reader = new GameBytes(bytes);
+            uint signature = reader.U32(), version = reader.U32();
+            if (signature != 0x496f436e || version < 3 || version > 5) throw new InvalidDataException("场景包索引版本不受支持。");
+            reader.I64();
+            int count = reader.Count();
+            int ids = reader.Position;
+            reader.Position += count * 8;
+            int size = reader.Count(GameBytes.Limit), start = reader.Position, end = checked(start + size);
+            if (size < count * 16 || end > bytes.Length) throw new InvalidDataException("场景包索引不完整。");
+            for (int i = 0; i < count; i++)
+            {
+                string path;
+                if (!wanted.TryGetValue(BitConverter.ToUInt64(bytes, ids + i * 8), out path)) continue;
+                int view = start + i * 16, length = BitConverter.ToInt32(bytes, view);
+                if (length == 0) continue;
+                int offset = checked(view + BitConverter.ToInt32(bytes, view + 4));
+                if (length < 0 || length > 100000 || offset < start || offset > end - length * 8)
+                    throw new InvalidDataException("场景包依赖范围异常。");
+                string[] classes = null;
+                for (int j = 0; j < length; j++)
+                {
+                    string asset;
+                    if (!imports.TryGetValue(BitConverter.ToUInt64(bytes, offset + j * 8), out asset)) continue;
+                    if (classes == null) classes = new string[length];
+                    classes[j] = asset;
+                }
+                if (classes != null) yield return new KeyValuePair<string, string[]>(path, classes);
+            }
+        }
+        ulong PackageId(int index) { return BitConverter.ToUInt64(toc, 144 + index * 12); }
+
+        public static string ImportedAsset(byte[] header, int reference, string[] packages)
+        {
+            if (reference >= 0) return "";
+            int imports = Catalog.Offset(header, 28), exports = Catalog.Offset(header, 32);
+            int index = -(reference + 1);
+            if (index >= (exports - imports) / 8) return "";
+            uint value = BitConverter.ToUInt32(header, imports + index * 8 + 4);
+            uint package = value & 0x3fffffff;
+            return (value >> 30) == 2 && package < packages.Length ? packages[package] ?? "" : "";
+        }
+
+        public byte[] ReadFile(string name, int start = 0, int? count = null)
         {
             int index;
             if (!Files.TryGetValue(name, out index)) throw new FileNotFoundException("游戏资源缺失：" + name);
+            return ReadChunk(index, start, count);
+        }
+        byte[] ReadChunk(int index, int start = 0, int? count = null)
+        {
             int position = checked(offsetsStart + index * 10);
-            long offset = GameBytes.IntBytes(toc, position, 5, true), length = GameBytes.IntBytes(toc, position + 5, 5, true);
+            long offset = GameBytes.IntBytes(toc, position, 5, true), size = GameBytes.IntBytes(toc, position + 5, 5, true);
+            if (start < 0 || start > size || count < 0) throw new InvalidDataException("游戏资源读取范围异常。");
+            offset += start;
+            long length = Math.Min(count ?? (size - start), size - start);
             if (length > GameBytes.Limit) throw new InvalidDataException("游戏资源过大。");
             if (length == 0) return new byte[0];
             long first = offset / blockSize, last = (offset + length - 1) / blockSize;

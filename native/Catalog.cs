@@ -17,6 +17,7 @@ namespace PBZ.Native
         public readonly List<Row> Items = new List<Row>();
         public readonly Row[] Achievements;
         public readonly Row[] Maps;
+        public readonly Row[] ScenePickups;
         public readonly List<string> Warnings = new List<string>();
         public readonly Dictionary<string, string> Localization;
 
@@ -42,6 +43,8 @@ namespace PBZ.Native
             }
             try { Maps = MapCatalog.Read(archive, this); }
             catch (Exception error) { Warnings.Add("地图收集表未识别：" + error.Message); Maps = new Row[0]; }
+            try { ScenePickups = SceneLoot.Read(archive, this); }
+            catch (Exception error) { Warnings.Add("普通拾取点未识别：" + error.Message); ScenePickups = new Row[0]; }
         }
 
         public string Local(string key)

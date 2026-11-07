@@ -11,7 +11,7 @@ namespace PBZ.Native
     {
         const string Root = "ProjectPBZ/Content/PBZContent/";
         static readonly string[] Kinds = { "bell", "blackstone", "amber", "flower", "key", "primary", "weapon", "phantom", "accessory", "medicine", "banyan", "pillar", "scarecrow" };
-        sealed class MapReader
+        internal sealed class MapReader
         {
             public readonly GameBytes Reader;
             readonly string[] names;

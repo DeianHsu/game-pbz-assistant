@@ -20,6 +20,10 @@ namespace PBZ.Native
         static readonly string[] Deduplicate = { "bell", "weapon", "phantom", "accessory", "medicine" };
         static readonly string[] LocationKinds = { "bell", "banyan", "pillar", "scarecrow", "amber", "blackstone" };
         static readonly Row AccessOrder = Data.Make("ready", 0, "route", 1, "unknown", 2, "locked", 3, "done", 4);
+        static readonly Row[] PickupCategories = {
+            Data.Make("id", SceneLoot.MoneyCategory, "name", "捡钱点"),
+            Data.Make("id", SceneLoot.MaterialCategory, "name", "武器材料点")
+        };
         public readonly Row[] Regions, Items, Categories;
         public readonly string CurrentMap, SelectedMap;
 
@@ -30,15 +34,24 @@ namespace PBZ.Native
             Regions = p.Catalog.Maps.Select(Region).ToArray();
             CurrentMap = Regions.FirstOrDefault(m => m.Flag("current")).S("id");
             SelectedMap = CurrentMap.Or(Regions.FirstOrDefault(m => m.Flag("visited")).S("id")).Or(Regions.FirstOrDefault().S("id"));
-            Items = BuildItems();
-            Categories = Counts(Guides.Rows("collectibleCategories"), Items).Where(c => c.N("total") > 0).ToArray();
+            Items = BuildItems().Concat(BuildPickupItems()).ToArray();
+            Categories = Counts(Guides.Rows("collectibleCategories").Concat(PickupCategories).ToArray(), Items).Where(c => c.N("total") > 0).ToArray();
+        }
+        public static bool MatchesCategory(Row item, string category)
+        {
+            return item.S("category") == category || item.Strings("pickupCategories").Contains(category);
+        }
+        public static double DistanceSquared(int[] a, int[] b)
+        {
+            double x = (double)a[0] - b[0], y = (double)a[1] - b[1], z = (double)a[2] - b[2];
+            return x * x + y * y + z * z;
         }
         bool Open(string map) { return p.Reached(map) || p.Rank >= Ranks.N(map.ToLowerInvariant(), int.MaxValue); }
         static Row[] Counts(Row[] categories, Row[] items)
         {
             return categories.Select(c =>
             {
-                Row[] list = items.Where(i => i.S("category") == c.S("id")).ToArray();
+                Row[] list = items.Where(i => MatchesCategory(i, c.S("id"))).ToArray();
                 return c.With("total", list.Length, "done", list.Count(i => i.S("state") == "done"), "unknown", list.Count(i => i.S("state") == "unknown"),
                     "missing", list.Count(i => i.S("state") == "missing"));
             }).ToArray();
@@ -79,7 +92,7 @@ namespace PBZ.Native
                         .Select(b =>
                         {
                             int[] target = (int[])b["position"];
-                            double meters = Math.Sqrt(target.Select((v, i) => Math.Pow((double)v - position[i], 2)).Sum()) / 100;
+                            double meters = Math.Sqrt(DistanceSquared(target, position)) / 100;
                             return Data.Make("id", b.S("id"), "name", b.S("name"), "distance", (int)Math.Floor(meters + 0.5),
                                 "activated", CollectionState.Detect(b, p.Slot) == "done");
                         }).OrderBy(b => b.N("distance")).Take(3).ToArray();
@@ -186,6 +199,52 @@ namespace PBZ.Native
                 return row.With("access", route, "guide", guide, "steps", steps, "regionIds", regionIds, "regionNames", regionNames,
                     "bell", guide.S("bell").Or(origin.Rows("nearest").FirstOrDefault().S("name")), "available", available);
             }).ToArray();
+        }
+
+        IEnumerable<Row> BuildPickupItems()
+        {
+            var records = p.Slot.Get("LevelActorManager") as Row;
+            var actors = records == null ? null : new Row(records, StringComparer.OrdinalIgnoreCase);
+            var mapByMember = Regions.SelectMany(region => region.Strings("members").Select(member => new { member, region }))
+                .ToDictionary(pair => pair.member, pair => pair.region, StringComparer.OrdinalIgnoreCase);
+            var points = Regions.SelectMany(region => region.Rows("points")).ToArray();
+            var bells = points.Where(point => point.S("kind") == "bell" && point.Get("position") is int[])
+                .ToLookup(point => point.S("rawMap"), StringComparer.OrdinalIgnoreCase);
+            var mappedActors = points.Where(point => point.S("actor") != "")
+                .ToLookup(point => point.S("actor"), StringComparer.OrdinalIgnoreCase);
+            foreach (Row point in p.Catalog.ScenePickups)
+            {
+                string map = point.S("rawMap"), type = point.S("pickupType");
+                Row region;
+                if (!mapByMember.TryGetValue(map, out region)) continue;
+                string state = SceneLoot.State(point, actors);
+                bool open = Open(map);
+                int[] position = (int[])point["position"];
+                Row[] nearest = bells[map].Select(bell =>
+                    Data.Make("name", bell.S("name"), "activated", bell.S("state") == "done",
+                        "distance", (int)Math.Floor(Math.Sqrt(DistanceSquared(position, (int[])bell["position"])) / 100 + 0.5)))
+                    .OrderBy(bell => bell.N("distance")).Take(3).ToArray();
+                string entryBell = nearest.Length == 0 && map.Equals("MeiGu_YiJi", StringComparison.OrdinalIgnoreCase)
+                    ? p.Catalog.Local("Bell_LYZ_011").Or("护法四像镜") : "";
+                Row existing = mappedActors[point.S("actor")].FirstOrDefault();
+                Row route = access.ForPickup(point, state, open, existing);
+                long? moneySort;
+                string money = SceneLoot.Money(point, p.Cycle, out moneySort);
+                string materials = SceneLoot.Materials(point);
+                string description = "";
+                if (type == "吊挂物" && state == "unknown")
+                    description = "存档无法仅凭击落状态确认落地物品是否已拾取。";
+                string step = type == "宝箱" ? "找到并打开此宝箱。" : type == "吊挂物" ? "击落吊挂物后检查落地的物品。" : "检查并拾取该处的场景物品。";
+                if (entryBell != "") step = "从护法四像镜进入幻术师遗迹后，" + step;
+                string regionName = region.S("name");
+                if (!map.Equals(region.S("id"), StringComparison.OrdinalIgnoreCase))
+                    regionName = Guides.Get("navigationMaps").Get(map).List().FirstOrDefault().Str().Or(regionName);
+                yield return point.With("id", point.S("actor"), "category", point.Strings("pickupCategories")[0], "state", state,
+                    "name", type, "moneyText", money, "moneySort", moneySort, "materialsText", materials, "description", description,
+                    "access", route, "available", open && route.S("state") != "locked",
+                    "nearest", nearest, "bell", entryBell == "" ? nearest.FirstOrDefault().S("name") : entryBell + "（入口）", "steps", new[] { step },
+                    "regionIds", new[] { region.S("id") }, "regionNames", new[] { regionName });
+            }
         }
     }
 }

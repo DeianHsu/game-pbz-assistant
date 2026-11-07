@@ -10,6 +10,7 @@ import { navigationMaps, navigationDefinitions } from '../reference/quest-naviga
 import { collectionCategories } from '../reference/collections.mjs';
 import { collectibleCategories } from '../reference/collectibles.mjs';
 import { analyzeAchievements } from '../reference/achievements.mjs';
+import { achievementPlans } from '../reference/achievement-plans.mjs';
 
 const achievementHelp = analyzeAchievements(null, {}, {
   items: [], quests: [], achievements: Array.from({ length: 66 }, (_, i) => ({
@@ -22,5 +23,5 @@ writeFileSync(process.argv[2], JSON.stringify({
   treasureStages, minimumStage, collectionGuides, accessSources, physicalRouteSources,
   pointRoutes: Object.fromEntries(pointRoutes), books: bookDirectory(), navigationMaps,
   navigationDefinitions: Object.fromEntries(navigationDefinitions), collectionCategories, collectibleCategories,
-  achievementHelp: Object.fromEntries(achievementHelp)
+  achievementHelp: Object.fromEntries(achievementHelp), achievementPlans
 }));
