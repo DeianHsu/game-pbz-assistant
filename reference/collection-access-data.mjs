@@ -1,4 +1,6 @@
 // Native point IDs, grouped by the route/door prerequisites checked against the walkthrough.
+import { baiXuePickupSteps } from './risk-data.mjs';
+
 export const accessSources = {
   pang: 'https://www.powerpyx.com/phantom-blade-zero-pangzhen-collectible-locations/',
   forest: 'https://www.powerpyx.com/phantom-blade-zero-crimson-forest-collectible-locations/',
@@ -45,8 +47,9 @@ add('HouJie', 'bell:Bell_SZ_024', ['flame', 'genKey'], '沿贫民窟支路到老
 add('HouJie', 'flower:F_06005 medicine:Medicine_Duration', ['flame', 'cellar'], '用后街秘密地窖开关开路，击败地窖后续敌人领取花瓣和慈花甘露。');
 add('HouJie', 'flower:F_06042', ['flame', 'heroic'], '取得破碎的侠胆后处理不灭侠胆遭遇，及时帮助尚未变怪的正道高手解脱再调查花瓣。', accessSources.pang, 'BuMieXiaDan');
 add('HouJie', 'flower:F_06046', ['wuXuan', 'heroic'], '持破碎的侠胆处理窄巷一带的不灭侠胆遭遇，再调查花瓣。', accessSources.pang, 'BuMieXiaDan');
-add('HouJie', 'flower:F_06004 flower:F_06022', ['courtyard', 'necklace'], '用后街小院钥匙进入屋内，向床上的人交付沾血项链，再检查院内后续花瓣。', accessSources.pang, 'BaiXue');
-add('HouJie', 'accessory:AC_Bleed', ['courtyard', 'digTree'], '完成白雪儿回访后，调查老槐树下可挖掘处领取雪与血。', accessSources.pang, 'BaiXue');
+for (const [id, step] of Object.entries(baiXuePickupSteps)) {
+  add(step.map, id, step.needs, step.action, step.source, step.quest);
+}
 add('HouJie', 'phantom:HuangJinHuoChong', ['pangTreasures'], '集齐庞镇四件珍宝，返回本区小张藏身处交付并领取黄金火铳。');
 add('HouJie', 'accessory:AC_RandomDrink', ['changHong', 'fleshLily'], '长鸿之后进入玉儿父亲所在屋内，继续血肉花的探望与治疗步骤。', accessSources.pang, 'XueRouHua');
 add('HouJie', 'accessory:AC_Ignite', ['lionDead', 'pipa'], '从尊主封印地上山，用修复后的幻术琵琶解除屏障，再查树旁宝箱。');

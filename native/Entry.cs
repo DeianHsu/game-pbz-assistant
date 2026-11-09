@@ -56,8 +56,10 @@ namespace PBZ.Native
             var c = new Collections(p);
             var n = new QuestNavigation(p, c);
             return Data.Make("slot", slot, "stage", p.Rank, "cycle", p.Cycle,
+                "baiXueStep", new[] { p.BaiXueStep.S("id"), p.BaiXueStep.S("title"), p.BaiXueStep.S("bell") },
                 "gates", p.Gates.Select(g => new object[] { g.S("id"), g.Flag("available"), g.Flag("passed"),
                     g.Rows("items").Select(i => new object[] { i.Flag("available"), i.Flag("satisfied"), i.S("state") }).ToArray() }).ToArray(),
+                "questFailures", p.QuestFailures.Values.Select(q => new[] { q.S("id"), q.S("state"), q.Get("failure").S("reason"), q.Get("failure").S("evidence") }).ToArray(),
                 "regions", c.Regions.Select(r => new object[] { r.S("id"), r.N("done"), r.N("total"),
                     r.Rows("points").Select(pt => new[] { pt.S("key"), pt.S("name"), pt.S("state"), pt.Get("access").S("state") }).ToArray() }).ToArray(),
                 "collectibles", c.Items.Where(i => i.Get("pickupCategories") == null)
@@ -75,6 +77,11 @@ namespace PBZ.Native
                 "achievementPlans", new AchievementPlan(p, c, n).Rows.Select(a => new object[] { a.S("id"), a.S("availability"), a.S("availabilityLabel"),
                     a.S("availabilityReason"), a.Strings("steps"), a.Strings("notes") }).ToArray(),
                 "treasures", p.Treasures.Select(t => new object[] { t.S("branch"), t.Flag("handedIn"), t.Flag("collected") }).ToArray(),
+                "questOffers", n.Quests.Where(q => q.Flag("canAccept")).Select(q =>
+                {
+                    Row target = q.Rows("targets").Single();
+                    return new[] { q.S("id"), q.S("stateLabel"), target.S("area"), target.S("person"), target.S("place"), target.S("bell"), target.S("next") };
+                }).ToArray(),
                 "quests", n.Quests.Select(q => new object[] { q.S("id"), q.S("state"), q.S("riskLevel"),
                     q.Rows("targets").Select(t => new[] { t.S("mapId"), t.S("person"), t.Get("access").S("state") }).ToArray() }).ToArray());
         }

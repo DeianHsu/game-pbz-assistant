@@ -1,3 +1,5 @@
+import { baiXueSteps } from './risk-data.mjs';
+
 const catalogSource = 'https://www.gamersky.com/handbook/202611/2240895_6.shtml';
 const routeSource = 'https://www-sky.gamehub.wiki/tools/guide-map/roadbooks/53';
 const mapBase = 'https://mygames.wiki/zh/phantom-blade-zero/map';
@@ -44,6 +46,7 @@ const guides = new Map([
   ['R_12006', { minRank: 6, bell: '红房子', reason: '所属地区为悲泣溪谷，但该书与红房子后续探索有关。先完成梦差幻境的三处幻门并取得人偶舌头，打开红房子后再查。', steps: ['完成陆家村、正道大营、枷笼山的梦差幻境传送门，取得人偶舌头。', '返回悲泣溪谷的红房子铃铛，开门后在后续探索中查找此书；公开攻略尚未给出它在房内的精确位置。'], source: 'https://www.gamersky.com/handbook/202610/2237253.shtml' }],
   ['R_12001', { minRank: 6, bell: '红房子', reason: '所属地区为悲泣溪谷，但该书与红房子后续探索有关。先完成梦差幻境的三处幻门并取得人偶舌头，打开红房子后再查。', steps: ['完成陆家村、正道大营、枷笼山的梦差幻境传送门，取得人偶舌头。', '返回悲泣溪谷的红房子铃铛，开门后在后续探索中查找此书；公开攻略尚未给出它在房内的精确位置。'], source: 'https://www.gamersky.com/handbook/202610/2237253.shtml' }],
   ['R_12003', { minRank: 6, bell: '红房子', reason: '所属地区为悲泣溪谷，但该书与红房子后续探索有关。先完成梦差幻境的三处幻门并取得人偶舌头，打开红房子后再查。', steps: ['完成陆家村、正道大营、枷笼山的梦差幻境传送门，取得人偶舌头。', '返回悲泣溪谷的红房子铃铛，开门后在后续探索中查找此书；公开攻略尚未给出它在房内的精确位置。'], source: 'https://www.gamersky.com/handbook/202610/2237253.shtml' }],
+  ['R_070002', { bell: baiXueSteps.ledger.bell, steps: [baiXueSteps.ledger.action], source: baiXueSteps.ledger.source }],
   ['R_070017', { bell: '枷笼山', steps: ['到枷笼山先推桥并打开囚笼救出周平子，再沿任务目标取得遗书；之后带回庞镇交给雨玲。'], source: 'https://www.powerpyx.com/phantom-blade-zero-mountain-of-imprisonment-collectible-locations/' }]
 ]);
 

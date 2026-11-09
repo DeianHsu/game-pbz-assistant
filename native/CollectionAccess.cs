@@ -90,9 +90,11 @@ namespace PBZ.Native
                 case "huangKey": title = "在幻鬼酒馆向牛掌柜取得黄家大宅钥匙"; value = Has("K_05011"); break;
                 case "genKey": title = "取得老根头家的黄铜钥匙"; value = Has("K_05004"); break;
                 case "cellar": title = "取得后街秘密地窖开关"; value = Has("K_06006"); break;
-                case "courtyard": title = "在赎罪名单后续取得庞镇后街小院钥匙"; value = Has("K_05007"); break;
+                case "courtyard": title = "在枷笼山赎罪名单后续取得庞镇后街小院钥匙"; value = Any(Has("K_05007"), p.BaiXueNecklaceGiven()); break;
                 case "necklace": title = "取得沾血项链，推进白雪儿回访"; value = Has("I_10003"); break;
-                case "digTree": title = "推进白雪儿至老槐树可以挖掘"; value = p.Tag("pz.老槐树.可以挖掘"); break;
+                case "baiXueNecklaceGiven": title = "到后街小院卧房给白雪儿戴上沾血的项链"; value = p.BaiXueNecklaceGiven(); break;
+                case "baiXueSecondPetal": title = "先拾取床边第一片花瓣，关闭拾取提示"; value = Any(p.Tag("pz.老槐树.解锁记忆之花"), Has("F_06004")); break;
+                case "digTree": title = "拾取院内第二片花瓣，关闭拾取提示后查看老槐树"; value = Any(p.Tag("pz.老槐树.可以挖掘"), Has("F_06022"), p.Done("BaiXue")); break;
                 case "pipa": title = "集齐部件并修复幻术琵琶"; value = Pipa; break;
                 case "zhouLetter": title = "在枷笼山取得周平子遗书"; value = Any(Has("R_070017"), p.Tag("ddsd.周平子.获得遗书"), p.Tag("ddsd.周平子.交付遗书")); break;
                 case "lanPassage": title = "完成兰家大少的密道告知，再回庞镇"; value = Any(p.Branch("LanJiaGongZi", "2"), Has("K_06002"), p.Done("LanJiaGongZi")); break;

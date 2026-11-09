@@ -20,8 +20,9 @@ namespace PBZ.Native
             { "accessory", "AccessoryInfos" }, { "medicine", "MedicineInfos" }
         };
         public readonly Catalog Catalog;
-        public readonly Row Slot, StageInfo, SystemInfo;
+        public readonly Row Slot, StageInfo, SystemInfo, BaiXueStep;
         public readonly Row[] Treasures, Achievements, Gates, Quests;
+        public readonly Dictionary<string, Row> QuestFailures;
         public readonly string Location, Bell;
         public readonly int Rank;
         public readonly int Cycle;
@@ -49,8 +50,10 @@ namespace PBZ.Native
             Bell = catalog.Local(bell).Or(bell);
             Treasures = BuildTreasures();
             Achievements = BuildAchievements(account.Entries.Get("__Achievements__"));
-            Gates = BuildGates();
             Quests = BuildQuests();
+            QuestFailures = Quests.Where(q => q.Get("failure") != null).ToDictionary(q => q.S("id"));
+            BaiXueStep = BuildBaiXueStep();
+            Gates = BuildGates();
         }
         public Row Quest(string id) { Row row; return Records.TryGetValue(id, out row) ? row : null; }
         public string State(string id) { return QuestRules.State(Quest(id)); }
@@ -179,6 +182,75 @@ namespace PBZ.Native
         {
             return Data.Make("state", state, "satisfied", satisfied, "evidence", evidence, "mode", mode);
         }
+        public bool? BaiXueNecklaceGiven()
+        {
+            if (Done("BaiXue") == true || Branch("BaiXue", "2") == true || Started("BaiXue") && BranchActive(Quest("BaiXue"), "3")) return true;
+            bool? necklace = Acquired("I_10003");
+            if (necklace != true) return necklace;
+            int amount = ItemRecord("goods", "I_10003").N("CurrentAmount", -1);
+            return amount < 0 ? (bool?)null : amount == 0;
+        }
+        Row BuildBaiXueStep()
+        {
+            const string snow = "BaiXue", ledger = "YongShengDaoZhu";
+            if (State(snow) == "failed") return Data.Make("id", "failed", "quest", snow);
+            if (Done(snow) == true || Acquired("AC_Bleed", "accessory") == true) return Data.Make("id", "done", "quest", snow);
+            bool spared = Tags.Contains("ddsd.杀气怪面.放走"), defeated = Tags.Contains("ddsd.杀气怪面.死亡");
+            string step;
+            if (Tags.Contains("pz.老槐树.可以挖掘") || Acquired("F_06022") == true) step = "tree";
+            else if (Tags.Contains("pz.老槐树.解锁记忆之花") || Acquired("F_06004") == true) step = "petal2";
+            else if (BaiXueNecklaceGiven() == true) step = "petal1";
+            else if (Started(snow) && BranchActive(Quest(snow), "1") && !spared) step = "puppet";
+            else if (Acquired("K_05007") == true && Acquired("I_10003") == true) step = "home";
+            else if (spared) step = "spared";
+            else if (Tags.Contains("ddsd.杀气怪面.不放走") && !defeated) step = "fight";
+            else if (defeated || Done(ledger) == true || Started(snow) || Tags.Contains("ddsd.白雪儿.接任务") || Acquired("K_05007") == true) step = "puppet";
+            else if (State(ledger) == "failed") return Data.Make("id", "failed", "quest", ledger);
+            else if (Tags.Contains("ddsd.获得物品.赎罪名单") || Acquired("R_070002") == true || Branch(ledger, "1") == true || BranchActive(Quest(ledger), "2")) step = "deliver";
+            else step = Started(ledger) || Tags.Contains("ddsd.杀气怪面.对话3") ? "ledger" : "start";
+            return Guides.Get("baiXueSteps").Get(step).Dict().With("id", step);
+        }
+        Row BaiXueCheck()
+        {
+            string id = BaiXueStep.S("id"), quest = BaiXueStep.S("quest");
+            if (id == "done") return Result("done", true, "白雪儿已完成，或本周目已取得饰品雪与血。");
+            if (id == "failed") return Result("failed", false, Guides.S("unknownQuestFailure")).With("quest", quest);
+            bool verify = BaiXueStep.Flag("verify");
+            string progress = "";
+            if (BaiXueStep.S("map") == "HouJie")
+            {
+                bool?[] petals = { Acquired("F_06004"), Acquired("F_06022") };
+                progress = "花瓣 " + (petals.All(v => v.HasValue) ? petals.Count(v => v == true) + "/2" : "待核对") +
+                    " · 雪与血" + (Acquired("AC_Bleed", "accessory").HasValue ? "待领取" : "待核对");
+            }
+            return Result(verify ? "unknown" : "active", false, BaiXueStep.S("evidence"), verify ? "manual" : "auto").With(
+                "quest", quest, "title", BaiXueStep.S("title"), "action", BaiXueStep.S("action"), "bell", BaiXueStep.S("bell"),
+                "source", BaiXueStep.S("source"), "otherSource", BaiXueStep.S("otherSource"), "progress", progress,
+                "stateLabel", verify ? "领取待核对" : "下一步");
+        }
+        bool ZhouRescued(Row record, bool? letter)
+        {
+            return Tags.Contains("ddsd.周平子.开笼子") || Tags.Contains("ddsd.周平子.获得遗书") ||
+                letter == true || BranchActive(record, "1") || BranchCompleted(record, "1");
+        }
+        Row QuestFailure(string id, Row record, string state)
+        {
+            if (state == "done" || state == "unknown") return null;
+            var rule = Guides.Get("questFailureRules").Get(id);
+            string tag = rule.S("tag");
+            string[] branches = rule.Strings("unlessBranches");
+            if (tag != "" && Tags.Contains(tag) && (record != null || rule.S("state") == "failed") &&
+                !rule.Strings("unlessTags").Any(Tags.Contains) && !(branches.Length > 0 && branches.All(branch => BranchCompleted(record, branch))) &&
+                !(id == "WuXiangWang" && ZhouRescued(record, Acquired("R_070017"))))
+            {
+                var context = rule.Get("context").Dict().Where(pair => Tags.Contains(pair.Key)).ToArray();
+                return Data.Make("state", state == "failed" ? state : rule.S("state").Or("interrupted"),
+                    "reason", rule.S("reason") + string.Concat(context.Select(pair => pair.Value.Str())),
+                    "evidence", string.Join("、", new[] { tag }.Concat(context.Select(pair => pair.Key))),
+                    "action", rule.S("action"), "source", rule.S("source"));
+            }
+            return state == "failed" ? Data.Make("state", state, "reason", Guides.S("unknownQuestFailure"), "evidence", record.S("QuestCompletion")) : null;
+        }
         Row Special(Row rule, Row record)
         {
             string state = QuestRules.State(record), kind = rule.S("check");
@@ -224,8 +296,7 @@ namespace PBZ.Native
             else
             {
                 bool? letter = Acquired("R_070017");
-                bool evidence = Tags.Contains("ddsd.周平子.开笼子") || Tags.Contains("ddsd.周平子.获得遗书") ||
-                    letter == true || state == "done" || BranchActive(record, "1") || BranchCompleted(record, "1");
+                bool evidence = state == "done" || ZhouRescued(record, letter);
                 result = evidence ? Result("done", true, "已有开笼、遗书、交付分支或完成记录。")
                     : Result(KnownTags && letter.HasValue ? "missing" : "unknown", false, "尚无开笼或遗书记录，请先核对救人步骤。", KnownTags && letter.HasValue ? "auto" : "manual");
             }
@@ -243,6 +314,7 @@ namespace PBZ.Native
                     return QuestRules.Requirement(rule, record).With("mode", "auto", "evidence", record == null
                         ? "所选槽位没有此任务记录。" : "任务状态：" + record.S("QuestCompletion") + "。已完成分支：" + string.Join("、", record.Strings("CompletedBranches")));
                 case "red-route": case "chivalry": case "cage": return Special(rule, record);
+                case "bai-xue": return BaiXueCheck();
                 case "achievement":
                     Row a = Achievements.FirstOrDefault(row => row.S("id") == rule.S("achievement"));
                     return Result(a.S("state").Or("unknown"), a.S("state") == "done", "按本地账号成就解锁记录判断。").With("stateLabel", a.S("stateLabel"));
@@ -260,8 +332,7 @@ namespace PBZ.Native
                         handedIn ? "已完成对应珍宝交付分支。" : item.S("name") + (own == true ? "已有获取记录。" : own.HasValue ? "没有获得记录。" : "背包字段缺失。"),
                         own.HasValue ? "auto" : "manual").With("stateLabel", "未记录获得");
                 default:
-                    bool done = id == "YongShengDaoZhu" && (Done("BaiXue") == true || Acquired("AC_Bleed", "accessory") == true) ||
-                        rule.S("completeQuest") != "" && Done(rule.S("completeQuest")) == true ||
+                    bool done = rule.S("completeQuest") != "" && Done(rule.S("completeQuest")) == true ||
                         rule.S("acceptedQuest") != "" && Started(rule.S("acceptedQuest"));
                     return Result(done ? "done" : "unknown", done, done ? "对应任务状态已证明路线开启或完成。" : "存档没有可靠的选择或遭遇记录，需现场核对。", done ? "auto" : "manual");
             }
@@ -270,7 +341,7 @@ namespace PBZ.Native
         {
             if (id == "mu-rewards" && !StageInfo.Flag("afterMu") || id == "crusher-reward" && !StageInfo.Flag("afterCrusher")) return false;
             if (new[] { "qixing", "baishan", "chivalry" }.Contains(id) && Location.Has("Zhengdaodaying")) return true;
-            if ((id == "qingshe" || id == "mirage") && StageInfo.Flag("readyForEstate")) return true;
+            if ((id == "qingshe" || id == "mirage") && (StageInfo.Flag("approachingEstate") || StageInfo.Flag("readyForEstate"))) return true;
             if ((id == "snow" || id == "sanmian") && StageInfo.Flag("afterEstate")) return true;
             return Rank >= Guides.Get("minimumStage").N(id, int.MaxValue);
         }
@@ -294,23 +365,25 @@ namespace PBZ.Native
                 bool available = Available(id);
                 Row[] items = g.Rows("requirements").Select(rule =>
                 {
-                    string quest = rule.S("quest");
-                    var info = Catalog.Quests.FirstOrDefault(q => q.S("id") == quest);
                     var result = new Row(rule);
                     foreach (var field in Evaluate(rule)) result[field.Key] = field.Value;
-                    string title = rule.S("title");
+                    string quest = result.S("quest");
+                    var info = Catalog.Quests.FirstOrDefault(q => q.S("id") == quest);
+                    Row failedQuest;
+                    if (!result.Flag("satisfied") && QuestFailures.TryGetValue(quest, out failedQuest)) result["failure"] = failedQuest.Get("failure");
+                    string title = result.S("title");
                     if (title == "完成紫色任务") title = "完成" + info.S("name").Or(quest);
                     if (rule.S("check") == "achievement") title = "核对" + Achievements.FirstOrDefault(a => a.S("id") == rule.S("achievement")).S("name").Or(rule.S("achievement"));
                     string[] achievements = rule.Get("achievements") == null ? Guides.Get("questAchievements").Strings(quest) : rule.Strings("achievements");
                     string label = result.S("stateLabel").Or(result.S("mode") == "manual" ? "需现场核对" : Guides.Get("STATE_LABELS").S(result.S("state")));
                     return result.With("title", title, "available", available && (id != "treasures" || Rank >= TreasureRank(rule.S("branch"))),
                         "stateLabel", label, "achievements", achievements,
-                        "source", rule.S("source").Or(g.S("source")),
-                        "current", Quest(quest).Rows("QuestBranches").Where(b => b.S("BranchType") == "EBranchType::BranchActivating")
+                        "source", result.S("source").Or(g.S("source")),
+                        "current", rule.S("check") == "bai-xue" ? new string[0] : Quest(quest).Rows("QuestBranches").Where(b => b.S("BranchType") == "EBranchType::BranchActivating")
                             .Select(b => info.Get("branches").Get(b.S("BranchID")).S("objective")).Where(s => s != "").ToArray());
                 }).ToArray();
                 return g.With("available", available, "passed", passed.ContainsKey(id) && passed[id], "items", items,
-                    "currentPending", items.Count(i => i.Flag("available") && !i.Flag("optional") && !i.Flag("satisfied")));
+                    "currentPending", items.Count(i => i.Flag("available") && !i.Flag("optional") && !i.Flag("satisfied") && i.Get("failure") == null));
             }).ToArray();
         }
         Row[] BuildQuests()
@@ -329,8 +402,10 @@ namespace PBZ.Native
                         "completed", BranchCompleted(record, key), "active", state == "EBranchType::BranchActivating");
                 }).ToArray();
                 string status = QuestRules.State(record);
+                Row failure = QuestFailure(id, record, status);
+                status = failure.S("state").Or(status);
                 return Data.Make("id", id, "name", info.S("name").Or(id), "type", type, "branches", branches, "state", status,
-                    "stateLabel", Guides.Get("STATE_LABELS").S(status), "recorded", record != null, "definitions", info.Get("branches"));
+                    "stateLabel", Guides.Get("STATE_LABELS").S(status), "recorded", record != null, "definitions", info.Get("branches"), "failure", failure);
             }).Where(q => q.S("type") != "Tutorial" && q.S("type") != "Quest_Branchline").ToArray();
         }
     }

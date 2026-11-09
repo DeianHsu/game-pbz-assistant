@@ -1,8 +1,10 @@
 // Original short notes; native IDs bind each note to a specific pickup.
-import { chivalryEncounters, sources } from './risk-data.mjs';
+import { baiXuePickupSteps, chivalryEncounters, sources } from './risk-data.mjs';
 
 const luSource = 'https://www.powerpyx.com/phantom-blade-zero-village-of-lu-collectible-locations/';
 export const collectionGuides = {
+  ...Object.fromEntries(Object.entries(baiXuePickupSteps)
+    .map(([id, step]) => [`${step.map}:${id}`, { bell: step.bell, steps: [step.action], source: step.source }])),
   ...Object.fromEntries(chivalryEncounters.map(({ map, id, bell, route }) => [`${map}:flower:${id}`, {
     bell, steps: [route, '持破碎的侠胆帮助弟子解脱，再调查原地的花瓣。已经解脱时可直接回该位置核对花瓣。'], source: sources.chivalry.url
   }])),

@@ -2,6 +2,7 @@ import { routeAccess } from './collection-access.mjs';
 import { accessSources } from './collection-access-data.mjs';
 import { chivalryEncounters, questAchievements } from './risk-data.mjs';
 import { analyzeTreasures } from './achievements.mjs';
+import { questOffers } from './quest-offers.mjs';
 
 const maps = {
   XiGu: ['悲泣溪谷', 1, 'XiGu'], FuJiZhiLin: ['血色森林', 2, 'FuJiZhiLin'], LuJiaCun: ['陆家村地区', 3, 'LuJiaCun'],
@@ -98,10 +99,6 @@ add('XiaoXue', '2', 'PangZhen', '八卦童子·八卦阁顶层', { needs: ['towe
 add('FangKuai', '1 S2', 'PangZhen', '幻鬼／渔夫·地下酒馆');
 add('FangKuai', 'S1', 'MeiGuHu', '渔夫的同伴·水行帮船坞／梅谷村东岛船坞', { source: 'https://www.gamersky.com/handbook/202610/2236093_23.shtml' });
 add('QingLiMenHu', '1 2', 'XiGu', '恶弓手／老弓手·驿站屋顶');
-add('BaiXue', '1', 'DengDingShanDao', '陈柱身旁·白雪儿人偶');
-add('BaiXue', '2', 'HouJie', '白雪儿肉身·后街小院', { needs: ['courtyard', 'necklace'] });
-add('BaiXue', '3', 'HouJie', '后街水井旁·老槐树', { needs: ['courtyard', 'digTree'] });
-add('YongShengDaoZhu', '1 2', 'DengDingShanDao', '怪面陈柱／遗失名单');
 add('YiGeBuLiu', '2', 'XiGu', '慧觉·驿站');
 add('YiGeBuLiu', '2-1', 'LuJiaCun', '苦叶寺同门·幸存者小院');
 add('YiGeBuLiu', '3', 'FuJiZhiLin', '飞贼营地');
@@ -120,11 +117,12 @@ add('QiXingJianZhen', '1', 'ZhengDaoDaYing', '七星弟子遗体·记忆之花')
 add('XianYin', '1', 'FuJiZhiLin', '镜林·虚空与弦者记忆');
 add('BaiYing', '1', 'MeiGuHu', '幻术师遗迹出口·白影的记忆', { needs: ['masks'] });
 
-function acquired(slot, id, category = 'InventoryInfos') {
+function acquired(slot, id, category = 'InventoryInfos', possession = false) {
   const table = slot.Inventory?.[category], cycle = slot.PBZGameSystem?.CycleCount;
   if (!table || !Number.isInteger(cycle)) return null;
   const record = Object.entries(table).find(([key]) => lower(key) === lower(id))?.[1];
   if (!record) return false;
+  if (possession) return true;
   return Number.isInteger(record.AcquiredCycle) ? record.AcquiredCycle === cycle : null;
 }
 const questDone = q => ['EQuestCompletion::QC_Succeded', 'EQuestCompletion::QC_Succeeded'].includes(q?.QuestCompletion);
@@ -216,30 +214,66 @@ function resolveTarget(t, branch, slot, stage) {
   const missing = checks.filter(([met]) => met === false), unknown = checks.filter(([met]) => met === null);
   if (missing.length) access = { state: 'locked', label: '暂时无法触发', reason: [...new Set(missing.map(([, text]) => text))].join(' ') };
   else if (unknown.length && access.state !== 'locked') access = { state: 'unknown', label: '前置记录待核实', reason: unknown.map(([, text]) => text).join(' ') };
+  else if (t.verify && access.state !== 'locked') access = { state: 'unknown', label: '领取待核对', reason: t.evidence };
   return { mapId, mapName: definition ? maps[mapId]?.[0] || mapName : mapName, area: mapName, person: t.person, bell: t.bell || t.point?.nearest[0]?.name || '',
     branchId: branch.id, objective: branch.objective || '', access, future, source: t.source || access.source || guide,
     evidence: t.evidence || (t.inferred ? '地区由存档当前活动目标明示；具体人物位置尚未逐项核实。' : '按原生任务分支、当前物品/事件及已核对地点定位；不以最初接取地代替当前目的地。'), next: t.next || '' };
 }
 
+function findOffer(q, slot, analysis, bells) {
+  if (q.recorded || q.state !== 'missing' || !Array.isArray(slot.Narrative?.NarrativeSavedQuests)) return;
+  const savedTags = slot.EventPipeline?.GlobalTags;
+  const tags = Array.isArray(savedTags) ? savedTags : undefined;
+  return questOffers[q.id]?.find(offer => {
+    const [, rank] = maps[offer.map];
+    if (analysis.stage.rank < rank && !analysis.stage.regions.some(region => lower(region).includes(lower(offer.map)))) return false;
+    if (!(offer.anchors || [offer.bellId]).some(id => bells.has(id))) return false;
+    if (offer.tags?.some(tag => tags?.includes(tag) !== true) || offer.cutoffs?.some(tag => tags?.includes(tag) !== false)) return false;
+    if (offer.before?.some(id => !analysis.gates.some(g => g.id === id && g.passed === false))) return false;
+    if (offer.snowStep && analysis.baiXueStep?.id !== offer.snowStep) return false;
+    if (offer.weapon && acquired(slot, offer.weapon, 'MainWeaponInfos', true) !== true) return false;
+    return !offer.needs?.length || routeAccess(offer, slot).state === 'ready';
+  });
+}
+
+function resolveOffer(offer, catalog) {
+  const [area, , mapId] = maps[offer.map];
+  return { mapId, mapName: maps[mapId]?.[0] || area, area, person: offer.person, place: offer.place, bell: catalog.bells?.[offer.bellId] || '',
+    next: offer.action, warning: offer.warning || '', source: offer.source,
+    access: { state: 'ready', label: '可接取', reason: '已核对接取点附近的到达记录及已知前置。' } };
+}
+
 export function analyzeQuestNavigation(slot, catalog, analysis, collections) {
   const treasures = analyzeTreasures(slot, catalog);
+  const activated = slot.BellManager?.ActivateBellIDs;
+  const bells = new Set(Array.isArray(activated) ? activated : []);
   const quests = analysis.quests.map(q => {
     const active = q.branches.filter(b => b.active), info = catalog.quests.find(i => i.id === q.id);
     const first = q.id === 'MoJiaoZhiNv' ? 'S1' : Object.keys(info?.branches || {})[0];
     const branches = q.state === 'done' ? [] : active.length ? active : first ? [{ id: first, ...info.branches[first] }] : [];
-    const targets = branches.flatMap(branch => branchTargets(q, branch, slot, collections, catalog, treasures).map(t => resolveTarget(t, branch, slot, analysis.stage)));
-    if (!targets.length && q.state !== 'done' && !['JiaoTuSanKu', 'MiaoShouKongKong'].includes(q.id)) targets.push(resolveTarget(target(null, '尚无可定位的活动步骤'), branches[0] || { id: '', objective: '' }, slot, analysis.stage));
-    if (q.state === 'failed') for (const t of targets) t.access = { state: 'locked', label: '任务已失败', reason: '原生任务日志明确记录失败；不能将剩余触发点当作仍可继续。' };
+    const failed = q.state === 'failed' || q.state === 'interrupted';
+    const step = analysis.baiXueStep, snowChain = Boolean(step) && ['BaiXue', 'YongShengDaoZhu'].includes(q.id);
+    const snowTarget = snowChain && step.quest === q.id && Boolean(step.map) && !failed;
+    const snowStart = q.state === 'missing' && ['start', 'puppet'].includes(step?.id);
+    const offer = findOffer(q, slot, analysis, bells);
+    const targets = offer ? [resolveOffer(offer, catalog)] : snowTarget
+      ? [resolveTarget({ ...step, next: step.action }, { id: step.branch, objective: step.title }, slot, analysis.stage)]
+      : !snowChain || failed ? branches.flatMap(branch => branchTargets(q, branch, slot, collections, catalog, treasures).map(t => resolveTarget(t, branch, slot, analysis.stage))) : [];
+    if (!targets.length && (!snowChain || failed) && q.state !== 'done' && !['JiaoTuSanKu', 'MiaoShouKongKong'].includes(q.id)) targets.push(resolveTarget(target(null, '尚无可定位的活动步骤'), branches[0] || { id: '', objective: '' }, slot, analysis.stage));
+    if (failed) for (const t of targets) t.access = { state: 'locked', label: q.state === 'interrupted' ? '任务已中断' : '任务已失败',
+      reason: q.failure?.reason || '原生任务日志明确记录失败。' };
     if (q.state === 'unknown') for (const t of targets) t.access = { state: 'unknown', label: '任务状态待核实', reason: '任务状态枚举尚未识别，暂不推断当前能否继续。' };
     const linked = analysis.gates.flatMap(g => g.items.filter(i => !i.satisfied && (i.quest === q.id
       || q.id === 'MiaoShouKongKong' && g.id === 'opera' && active.some(b => ['6', '6-1'].includes(b.id))))
       .filter(() => !g.planning).map(i => ({ gateId: g.id, gateName: g.name, title: i.title, action: i.action, impact: i.impact || '',
         level: g.passed ? 'urgent' : i.available ? 'warning' : 'future', achievements: i.achievements, verification: i.verification, source: i.source })));
-    const risks = q.state === 'done' ? [] : linked;
+    const risks = q.state === 'done' || failed ? [] : linked;
     const achievementIds = new Set([...(questAchievements[q.id] || []), ...linked.flatMap(r => r.achievements.map(a => a.id))]);
-    return { ...q, navigation: { targets, risks, riskLevel: q.state === 'failed' || risks.some(r => r.level === 'urgent') ? 'urgent' : risks.some(r => r.level === 'warning') ? 'warning' : risks.length ? 'future' : 'none',
+    const actionable = snowTarget && !snowStart && analysis.gates.some(g => g.id === 'mountain' && g.available);
+    const stateLabel = offer ? '未接取' : snowTarget && q.state === 'missing' && !snowStart ? '路线可继续' : q.stateLabel;
+    return { ...q, actionable, canAccept: Boolean(offer), stateLabel, navigation: { targets, risks, riskLevel: failed || risks.some(r => r.level === 'urgent') ? 'urgent' : offer?.warning || risks.some(r => r.level === 'warning') ? 'warning' : risks.length ? 'future' : 'none',
       achievements: [...achievementIds].map(id => ({ id, name: catalog.achievements?.find(a => a.id === id)?.name || id })),
-      predicted: !active.length && q.state !== 'done' } };
+      predicted: !offer && !active.length && q.state !== 'done' } };
   });
   const current = quests.filter(q => q.recorded && q.state !== 'done');
   return { quests, taskNavigation: { currentMap: collections.regions.find(m => m.current)?.id || null,

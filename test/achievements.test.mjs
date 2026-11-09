@@ -84,10 +84,10 @@ test('完成其他结局分支不能冒充无根仙露交付', () => {
   assert.equal(requirementResult({ branch: '4-A', branchOnly: true }, q).satisfied, false);
   q.CompletedBranches.push('4-A'); assert.equal(requirementResult({ branch: '4-A', branchOnly: true }, q).satisfied, true);
 });
-test('有分歧的陈柱选项持续要求核对，不因赎罪名单结束自动变绿', () => {
-  const s = slot(); s.Narrative.NarrativeSavedQuests.push({ ...active('YongShengDaoZhu'), QuestCompletion: 'EQuestCompletion::QC_Succeded' });
-  const r = analyzeSlot(s, catalog).gates.find(g => g.id === 'mountain').items.find(i => i.verification === '来源存在分歧');
-  assert.equal(r.satisfied, false); assert.equal(r.mode, 'manual'); assert.equal(r.otherSources.length, 2);
+test('白雪儿路线关联记忆之花和饰品成就', () => {
+  const r = analyzeSlot(slot(), catalog).gates.find(g => g.id === 'mountain').items.find(i => i.check === 'bai-xue');
+  assert.deepEqual(r.achievements.map(a => a.id), ['ACH_044', 'ACH_046']);
+  assert.match(r.impact, /雪与血/);
 });
 test('山庄前十任务与终局龙柱分开，战前不要求取得战后头带', () => {
   assert.equal(trueEndingQuests.length, 10); assert.ok(!trueEndingQuests.includes('XueMaiJueXing'));

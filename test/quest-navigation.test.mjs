@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeQuestNavigation } from '../reference/quest-navigation.mjs';
+import { analyzeSlot } from '../reference/rules.mjs';
 
 const record = (id, status = 'Started') => ({ QuestClass: `/Game/${id}.${id}_C`, QuestCompletion: `EQuestCompletion::QC_${status}` });
 const quest = (id, ids, extra = {}) => ({ id, name: id, type: 'Simple', state: 'active', recorded: true, branches: ids.map(id => ({ id, active: true, objective: `当前步骤${id}` })), ...extra });
@@ -10,6 +11,108 @@ const catalog = { quests: [], items: [], achievements: [] };
 const collections = { regions: [{ id: 'PangZhen', current: true, points: [] }] };
 const run = (q, s = save(), a = analysis([q]), c = collections) => analyzeQuestNavigation(s, catalog, a, c).quests[0].navigation;
 const add = (s, id, cycle = 1) => s.Inventory.InventoryInfos[id] = { AcquiredCycle: cycle, CurrentAmount: 0 };
+function acceptance(slot, ...ids) {
+  const c = { ...catalog, bells: { Bell_NLES_003: '驿站', Bell_DDSD_006: '宗祠外山门' },
+    quests: ids.map(id => ({ id, type: 'Simple' })) };
+  const quests = analyzeQuestNavigation(slot, c, analyzeSlot(slot, c), collections).quests;
+  return ids.map(id => quests.find(q => q.id === id));
+}
+
+test('可接任务按接取地点显示，接取、完成、失败或未知枚举均不重复提示', () => {
+  const s = save();
+  s.BellManager = { ActivateBellIDs: ['Bell_NLES_003'] };
+  let [windmill] = acceptance(s, 'FengChe');
+  assert.equal(windmill.canAccept, true);
+  assert.equal(windmill.stateLabel, '未接取');
+  const [t] = windmill.navigation.targets;
+  assert.deepEqual([t.mapName, t.person, t.place, t.bell, t.access.label], ['悲泣溪谷', '货郎', '驿站内的货郎摊位', '驿站', '可接取']);
+  assert.equal(windmill.navigation.riskLevel, 'warning');
+  for (const status of ['Started', 'Succeeded', 'Failed', 'Unknown']) {
+    s.Narrative.NarrativeSavedQuests = [record('FengChe', status)];
+    [windmill] = acceptance(s, 'FengChe');
+    assert.equal(windmill.canAccept, false, status);
+  }
+});
+
+test('后期铃铛记录不能单独开放后期任务，已到庞镇仍要核对大宅钥匙', () => {
+  const s = save();
+  s.BellManager = { ActivateBellIDs: ['Bell_SZ_016'] };
+  add(s, 'K_05011');
+  assert.equal(acceptance(s, 'ZaiHuiXiongZhang')[0].canAccept, false);
+  s.PBZGameSystem.CurrentLevelName = 'PBZ_Pangzhen_WP';
+  add(s, 'K_05011', 0);
+  assert.equal(acceptance(s, 'ZaiHuiXiongZhang')[0].canAccept, false);
+  add(s, 'K_05011');
+  const [brother] = acceptance(s, 'ZaiHuiXiongZhang');
+  assert.equal(brother.canAccept, true);
+  assert.equal(brother.navigation.targets[0].mapId, 'PangZhen');
+  assert.equal(brother.navigation.targets[0].place, '黄家大宅二楼卧室');
+});
+
+test('跨过白赤练或驿站变怪后，风车不再列为可接；缺少事件记录也不推定开放', () => {
+  const s = save();
+  s.BellManager = { ActivateBellIDs: ['Bell_NLES_003'] };
+  const canAccept = () => acceptance(s, 'FengChe')[0].canAccept;
+  s.Narrative.NarrativeSavedQuests = [record('MainCh1-LinZhongShaJi', 'Succeeded')];
+  assert.equal(canAccept(), false);
+  s.Narrative.NarrativeSavedQuests = [];
+  s.EventPipeline.GlobalTags = ['quest.一个不留.营地变怪'];
+  assert.equal(canAccept(), false);
+  delete s.EventPipeline.GlobalTags;
+  assert.equal(canAccept(), false);
+});
+
+test('玉儿移动后只显示最新接取地点，女织死亡后隐藏未接的入梦祈子', () => {
+  const s = save();
+  s.BellManager = { ActivateBellIDs: ['Bell_NLES_022', 'Bell_NLES_003', 'Bell_LZSJ_005', 'Bell_SXC_01_01'] };
+  s.Narrative.NarrativeSavedQuests = [record('MainCh1-LinZhongShaJi')];
+  const lily = () => acceptance(s, 'XueRouHua')[0].navigation.targets.map(t => t.place);
+  assert.deepEqual(lily(), ['初见玉儿处下方的溪边']);
+  s.EventPipeline.GlobalTags.push('xg.营地玉儿.到达营地');
+  assert.deepEqual(lily(), ['驿站铁匠铺旁']);
+  s.EventPipeline.GlobalTags.push('fjzl.营地玉儿.到达营地');
+  assert.deepEqual(lily(), ['飞贼营地']);
+
+  s.Narrative.NarrativeSavedQuests.push(record('MainCh1-ShiXinCun'));
+  assert.equal(acceptance(s, 'RuMengQiZi')[0].canAccept, true);
+  s.EventPipeline.GlobalTags.push('ljc.女织.死亡');
+  assert.equal(acceptance(s, 'RuMengQiZi')[0].canAccept, false);
+});
+
+test('白雪儿的未接取入口随陈柱分支改变，冰封回访任务按冰封和持有武器区分', () => {
+  const s = save();
+  s.PBZGameSystem.CurrentLevelName = 'PBZ_DengDingShanDao_WP';
+  s.BellManager = { ActivateBellIDs: ['Bell_DDSD_006', 'Bell_LZSJ_019'] };
+  const available = () => acceptance(s, 'YongShengDaoZhu', 'BaiXue', 'QuanXin', 'YiBiZhiDao').filter(q => q.canAccept).map(q => q.id);
+  assert.deepEqual(available(), ['YongShengDaoZhu']);
+  s.Narrative.NarrativeSavedQuests.push(record('YongShengDaoZhu', 'Succeeded'));
+  s.EventPipeline.GlobalTags.push('ddsd.杀气怪面.死亡');
+  assert.deepEqual(available(), ['BaiXue']);
+  s.EventPipeline.GlobalTags.push('ddsd.杀气怪面.放走', 'fjzl.风雪数据层.激活');
+  assert.deepEqual(available(), ['QuanXin']);
+  s.Inventory.MainWeaponInfos = { YuuBlade: { AcquiredCycle: 0 } };
+  assert.deepEqual(available(), ['QuanXin', 'YiBiZhiDao']);
+});
+
+test('有名单但没接任务时，路线仍给出交付目标，之后转到后街小院', () => {
+  const s = save(), c = { ...catalog, bells: {}, quests: [{ id: 'YongShengDaoZhu' }, { id: 'BaiXue' }] };
+  s.PBZGameSystem.CurrentLevelName = 'PBZ_DengDingShanDao_WP';
+  s.EventPipeline.GlobalTags.push('quest.幻术琵琶.组装好', 'ddsd.获得物品.赎罪名单');
+  const quests = () => analyzeQuestNavigation(s, c, analyzeSlot(s, c), collections).quests;
+  let [ledger, snow] = quests();
+  assert.equal(ledger.recorded, false);
+  assert.equal(ledger.actionable, true);
+  assert.equal(ledger.navigation.targets[0].bell, '宗祠外山门');
+  assert.equal(snow.navigation.targets.length, 0);
+  s.EventPipeline.GlobalTags.push('ddsd.杀气怪面.放走');
+  add(s, 'K_05007'); add(s, 'I_10003');
+  s.Inventory.InventoryInfos.I_10003.CurrentAmount = 1;
+  [ledger, snow] = quests();
+  assert.equal(ledger.navigation.targets.length, 0);
+  assert.equal(snow.actionable, true);
+  assert.equal(snow.navigation.targets[0].bell, '青蛇屋');
+  assert.equal(snow.navigation.targets[0].mapId, 'PangZhen');
+});
 
 test('归途按当前分支从庞镇故屋切回陆家村交付，不按最初接任务地固定分类', () => {
   assert.equal(run(quest('GuiTu', ['3-A'])).targets[0].mapId, 'PangZhen');

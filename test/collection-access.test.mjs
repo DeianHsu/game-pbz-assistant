@@ -6,6 +6,24 @@ const save = () => ({ PBZGameSystem: { CycleCount: 1 }, Inventory: { InventoryIn
 const point = overrides => ({ rawMap: 'FuJiZhiLin', kind: 'medicine', id: 'Medicine_AdditionalRecover', state: 'missing', nearest: [{ activated: true }], ...overrides });
 const record = (id, branches = []) => ({ QuestClass: `/Game/${id}.${id}_C`, QuestCompletion: 'EQuestCompletion::QC_Started', QuestBranches: branches });
 
+test('白雪儿小院花瓣与雪与血分开检查项链交付、拾取与挖掘', () => {
+  const s = save(), tags = s.EventPipeline.GlobalTags;
+  tags.push('pz.后街.进入', 'pz.击杀.堕落将军');
+  const items = s.Inventory.InventoryInfos;
+  const pts = [point({ rawMap: 'HouJie', kind: 'flower', id: 'F_06004' }), point({ rawMap: 'HouJie', kind: 'flower', id: 'F_06022' }),
+    point({ rawMap: 'HouJie', kind: 'accessory', id: 'AC_Bleed' })];
+  const states = () => pts.map(p => collectionAccess(p, s, true).state);
+  items.K_05007 = { AcquiredCycle: 1, CurrentAmount: 0 };
+  items.I_10003 = { AcquiredCycle: 1, CurrentAmount: 1 };
+  assert.deepEqual(states(), ['locked', 'locked', 'locked']);
+  items.I_10003.CurrentAmount = 0;
+  assert.deepEqual(states(), ['ready', 'locked', 'locked']);
+  tags.push('pz.老槐树.解锁记忆之花');
+  assert.deepEqual(states(), ['ready', 'ready', 'locked']);
+  tags.push('pz.老槐树.可以挖掘');
+  assert.deepEqual(states(), ['ready', 'ready', 'ready']);
+});
+
 test('已到血色森林不代表冰封杀气塔开放，未冰封的药瓶保持锁定', () => {
   const access = collectionAccess(point(), save(), true);
   assert.equal(access.state, 'locked');

@@ -9,12 +9,33 @@ export const sources = {
   qixing: { title: '游民星空 七星剑阵与红衣女剑客', url: 'https://www.gamersky.com/handbook/202610/2238397.shtml' },
   chivalry: { title: '游侠网 不灭侠胆六处花瓣路线', url: 'https://gl.ali213.net/html/2026-11/1821581.html' },
   mountain: { title: 'PowerPyx 枷笼山收集路线', url: 'https://www.powerpyx.com/phantom-blade-zero-mountain-of-imprisonment-collectible-locations/' },
+  ledger: { title: '游民星空 枷笼山图文路线（赎罪名单）', url: 'https://www.gamersky.com/tools/guide-map/roadbooks/53' },
+  baiXue: { title: '影之刃百科 白雪儿任务流程', url: 'https://wiki.biligame.com/yingzhiren/%E7%99%BD%E9%9B%AA%E5%84%BF' },
+  baiXueChoices: { title: 'AllThingsHow 白雪儿与陈柱离开分支', url: 'https://allthings.how/phantom-blade-zero-bai-xue/' },
   snow: { title: 'PowerPyx 断魂山收集路线', url: 'https://www.powerpyx.com/phantom-blade-zero-mount-soulrend-collectible-locations/' },
   cui: { title: 'TigerJek 小翠完整路线', url: 'https://tigerjek.com/cuis-questline-walkthrough-in-phantom-blade-zero/' },
   walkthrough: { title: 'KeenGamer 全流程与离场奖励', url: 'https://www.keengamer.com/articles/guides/phantom-blade-zero-complete-walkthrough-all-quests/' },
   treasures: { title: 'PC Gamer 小张珍宝与戏楼关门说明', url: 'https://www.pcgamer.com/games/action/phantom-blade-zero-quickhand-request-treasure-locations-relics/' },
   estate: { title: 'PowerPyx 戏梦山庄收集路线', url: 'https://www.powerpyx.com/phantom-blade-zero-mirage-estate-pangzhen-collectible-locations/' }
 };
+
+const chen = { quest: 'YongShengDaoZhu', map: 'DengDingShanDao', bell: '宗祠外山门', person: '头痛的陈柱', source: sources.ledger.url };
+const puppet = { quest: 'BaiXue', map: chen.map, bell: chen.bell, person: '陈柱身旁坐着的女性人偶', source: sources.baiXue.url };
+const courtyard = { quest: 'BaiXue', map: 'HouJie', bell: '青蛇屋', source: sources.baiXue.url };
+export const baiXueCourtyardPath = '从青蛇屋铃铛过石板桥，右转上坡，沿路左侧到小院。用小院钥匙开门，上梯经屋顶进卧房。';
+export const baiXueSteps = {
+  start: { ...chen, branch: '1', title: '找陈柱接取赎罪名单', action: '从宗祠外山门铃铛往东过桥，找头痛的陈柱。多与他对话几次，直到接到找名单的目标。', evidence: '尚无赎罪名单的接取或拾取记录。' },
+  ledger: { ...chen, branch: '1', person: '疯婆子战场下方洞窟的悬崖岔道', title: '到洞窟拾取赎罪名单', action: '从宗祠外山门右侧下楼，经过疯婆子奎艳艳的战场，沿木箱后方下到洞窟。到岔路时往右侧洞口走，在悬崖边拾取江湖异闻线索「赎罪名单」。', evidence: '已接取赎罪名单，尚无本周目拾取记录。' },
+  deliver: { ...chen, branch: '2', title: '回陈柱处交赎罪名单', action: '从宗祠外山门铃铛往东过桥找陈柱，继续对话到能交名单。「这样并不能洗去你的罪孽」会触发铁面杀手战，战后找女性人偶。「算了，放他一条生路」会走离开分支，等结算后核对小院钥匙和沾血的项链。', evidence: '已记录名单拾取或找回分支。本机游戏资源给离开分支也配置了钥匙和项链。', otherSource: sources.baiXueChoices.url },
+  fight: { ...chen, branch: '2', person: '铁面杀手·陈柱', title: '击败铁面杀手', action: '继续陈柱的战斗分支。战后和旁边坐着的女性人偶对话，确认拿到庞镇后街小院钥匙和沾血的项链。', evidence: '已选择与陈柱交战，尚无该战斗的击败事件。' },
+  puppet: { ...puppet, branch: '1', title: '与女性人偶对话，接白雪儿', action: '回到陈柱原先坐着的位置，跟他旁边坐着的女性人偶对话。领取沾血的项链，并核对是否已取得庞镇后街小院钥匙。', evidence: '存档已到陈柱结算或女性人偶的任务步骤。' },
+  spared: { ...puppet, branch: '1', person: '陈柱离开后的对话结算', title: '核对陈柱离开后的钥匙和项链', action: '核对陈柱离开后的对话与奖励，等结算完毕再重新读取存档。拿到庞镇后街小院钥匙和沾血的项链后，可直接按青蛇屋路线前往小院。', evidence: '已记录陈柱离开。钥匙和项链的本周目获取记录尚未齐全。', source: sources.baiXueChoices.url, verify: true },
+  home: { ...courtyard, branch: '2', person: '后街小院卧房·床上的白雪儿', title: '到后街小院给白雪儿戴项链', action: baiXueCourtyardPath + '与床上的白雪儿互动，交付沾血的项链。', needs: ['courtyard', 'necklace'], evidence: '本周目小院钥匙和沾血的项链已有获取记录。' },
+  petal1: { ...courtyard, branch: '3', person: '后街小院卧房·床边', title: '拾取花瓣「其一：儿时的老树」', action: baiXueCourtyardPath + '给白雪儿戴上项链后，拾取卧房里床边的第一片花瓣。', needs: ['courtyard', 'baiXueNecklaceGiven'], evidence: '已有交付项链或卧房分支完成的记录。' },
+  petal2: { ...courtyard, branch: '3', person: '后街小院·院内水井附近', title: '拾取花瓣「其二：用心悔过」', action: baiXueCourtyardPath + '拿到白雪儿的第一片花瓣并关闭拾取提示后，从卧房另一侧出去，下到水井附近的院子，拾取第二片。', needs: ['courtyard', 'baiXueSecondPetal'], evidence: '已记录第一片花瓣或第二片花瓣的解锁事件。' },
+  tree: { ...courtyard, branch: '3', person: '后街小院·水井旁的老槐树', title: '调查老槐树下，领取「雪与血」', action: baiXueCourtyardPath + '穿过白雪儿的卧房下到院子，拿完第二片花瓣并关掉拾取提示，再调查水井旁大树下的交互点。', needs: ['courtyard', 'digTree'], evidence: '已记录第二片花瓣或老槐树可挖掘事件。' }
+};
+export const baiXuePickupSteps = { 'flower:F_06004': baiXueSteps.petal1, 'flower:F_06022': baiXueSteps.petal2, 'accessory:AC_Bleed': baiXueSteps.tree };
 
 export const trueEndingQuests = ['XiGuShenChu', 'XuKongHuanXiang', 'JiGuanChuan', 'XiLouFeiXu', 'HuanShuPiPa', 'KunLunSanJie', 'QiShengHeLai', 'RenOuZhongShu', 'HongFangZi', 'HuXinMiMi'];
 export const questAchievements = {
@@ -23,6 +44,44 @@ export const questAchievements = {
   JianXiYiShi: ['ACH_038'], JiuSiFuShang: ['ACH_038'], XueRouHua: ['ACH_038'],
   MiaoShouKongKong: ['ACH_039'], JiaoTuSanKu: ['ACH_039'], RongShuZhiXin: ['ACH_040'], ShaoZhu: ['ACH_058']
 };
+
+// Explicit events from the native quest and NPC graphs. Shared cutoffs apply to recorded tasks only.
+export const unknownQuestFailure = '游戏日志已标记任务失败，存档未记录具体原因。';
+export const questFailureRules = {
+  XiaoCui: {
+    tag: 'ddsd.陆三迁2.死亡', unlessBranches: ['3'],
+    unlessTags: ['ddsd.陆三迁2.完成任务'],
+    reason: '陆三迁未获救，已在囚笼道的吊笼中死亡。',
+    context: { 'ddsd.开门.独木桥': '此档已开启通往宗祠的独木桥。', 'ddsd.击杀.荒行子2': '此档也已击败荒行子。' },
+    action: '回到陆三迁还活着的存档，在囚笼道降下吊笼、救出陆三迁并交给他无根仙露，再沿独木桥上山。',
+    source: sources.cui.url
+  },
+  WuXiangWang: {
+    tag: 'ddsd.周平子.死亡', reason: '周平子在获救前死亡，遗书交付路线已中断。',
+    action: '回到周平子还活着的存档，先帮忙推桥，再打开牢笼救人。', source: sources.missables.url
+  },
+  LiuYi: {
+    tag: 'ddsd.柳义.未开笼子死亡', unlessTags: ['ddsd.柳义.完成任务'],
+    reason: '柳义在获救前死亡，无法继续他的交付和拔剑步骤。'
+  },
+  BuMieXiaDan: {
+    tag: 'pz.不灭侠胆.任务失败', state: 'failed',
+    reason: '有正道高手错过了解脱时机。存档记录了任务失败，未指明是哪一处。', source: sources.missables.url
+  },
+  QiShengHeLai: {
+    tag: 'quest.任务中断.进入青蛇屋外围', unlessBranches: ['3', '4'],
+    reason: '进入青蛇屋外围时，宗祠和宗祠地下的任务步骤还没有全部完成。', source: sources.missables.url
+  },
+  XueRouHua: {
+    tag: 'quest.任务中断.抵达陆家村', unlessBranches: ['1'],
+    reason: '抵达陆家村前，尚未完成血肉花的第一个目标。', source: sources.missables.url
+  },
+  ...Object.fromEntries(['FengChe', 'JiuSiFuShang', 'DaoYiYouDao', 'QingLiMenHu', 'NanYanZhiYin'].map(id => [id, {
+    tag: 'quest.一个不留.营地变怪', reason: '任务未完成时，驿站与飞贼营地已触发变异，相关人物的原有任务路线已中断。',
+    source: sources.missables.url
+  }]))
+};
+
 export const treasureGroups = [
   { name: '血色森林', branch: '1-1', ids: ['T_02001', 'T_02002', 'T_02003'] },
   { name: '陆家村', branch: '3-1', ids: ['T_05001', 'T_05002', 'T_05003'] },
@@ -70,14 +129,13 @@ export const additionalCheckpoints = [
     note: '按本周目六处解脱事件、花瓣和任务状态自动核对；战斗中的跪地窗口仍需及时操作，保存后再确认结果。',
     requirements: [{ quest: 'BuMieXiaDan', check: 'chivalry', title: '在高手完全异变前处理侠胆', action: '先见过剑阵领头人，再回“组织”酒馆向狼头领取破碎的侠胆；之后在高手挣扎时处理，并调查其记忆花瓣。', achievements: ['ACH_044'], impact: '影响特定花瓣，全花收集与10朵成就不是同一口径。' }] },
   { id: 'mountain', name: '枷笼山救人与关键选择', regions: ['DengDingShanDao', 'JiaLong'], source: sources.missables.url,
-    note: '本组含任务前置和有分歧的选项。未知事件不会自动显示绿色，陈柱的选择也不会被工具判定为必须击杀。',
+    note: '核对枷笼山救人、陈柱的选项和白雪儿回访。白雪儿路线按所选槽位的任务、事件和本周目道具更新。',
     requirements: [
-      { quest: 'XiaoCui', branch: '3', title: '救出陆三迁', action: '先处理山门和囚笼中的老人，再继续山顶路线。', source: sources.cui.url },
-      { quest: 'XiaoCui', branch: '4-A', branchOnly: true, title: '给陆三迁无根仙露', action: '在横刀毕峰附近寻找无根仙露，救人后交给老人；仅持有药物不算已交付。', source: sources.cui.url, achievements: ['ACH_046'], impact: '关联粗糙煌心，其他饰品也可满足30种计数。' },
-      { check: 'item', category: 'goods', item: 'R_070001', title: '取得陆三迁给家人的绝笔信', action: '推进到老人最后的对话，保留给儿子的书信和红头绳，以便后期与小翠父母会面。', source: sources.cui.url },
+      { quest: 'XiaoCui', branch: '3', title: '上宗祠前救出陆三迁', action: '走通往宗祠的独木桥之前，先在囚笼道用脱落的牢笼拉杆降下吊笼，救出陆三迁并交给他无根仙露。', source: sources.cui.url },
+      { quest: 'XiaoCui', branch: '4-A', branchOnly: true, title: '交无根仙露并在宗祠回访陆三迁', action: '在横刀毕峰附近取得无根仙露，救人后交给陆三迁，随后到圣母娘娘宗祠的铃铛旁找他。', source: sources.cui.url, achievements: ['ACH_046'], impact: '关联粗糙煌心，其他饰品也可满足30种计数。' },
+      { quest: 'XiaoCui', check: 'item', category: 'goods', item: 'R_070001', title: '取得陆三迁给家人的绝笔信', action: '推进到老人最后的对话，保留给儿子的书信和红头绳，以便后期与小翠父母会面。', source: sources.cui.url },
       { quest: 'WuXiangWang', check: 'cage', title: '打奎艳艳前先救周平子', action: '先帮助推桥并放出囚笼里的周平子，再挑战疯婆子；战后核对遗书。开笼事件、遗书或遗书交付分支可证明该步骤，早期线索不代替救人。' },
-      { quest: 'YongShengDaoZhu', check: 'manual', title: '陈柱选项：先留档并核对白雪儿', action: '两家攻略对放过陈柱会否漏奖励存在分歧。交还名单前手动存档；随后核对项链、钥匙和白雪儿的对话，不按单一攻略强制选杀。', verification: '来源存在分歧', otherSources: [sources.mountain, sources.alternatives], achievements: ['ACH_044', 'ACH_046'] },
-      { quest: 'BaiXue', title: '跟进白雪儿的肉身与树下线索', action: '按游戏日志完成后街调查；缺少任务记录时不要直接判定已因选项失败。', verification: '选项截止有分歧，完成状态可读' },
+      { quest: 'BaiXue', check: 'bai-xue', title: '赎罪名单与白雪儿', source: sources.baiXue.url, achievements: ['ACH_044', 'ACH_046'], impact: '两片花瓣可合成白雪儿的记忆之花，树下还可领取饰品雪与血。' },
       { quest: 'LiuYi', title: '在柳义存活时完成英雄悲歌', action: '找到墨玑子的遗物，回到柳义处交付并处理拔剑目标，避免拖到人物离场。', source: sources.alternatives.url, achievements: ['ACH_044'], impact: '花瓣收集候选，精确离场触发点待实机核对。' }
     ] },
   { id: 'mirage', name: '通过青蛇屋进入戏梦山庄前', regions: ['Pangzhen', 'HouJie', 'MeiGu'], source: sources.ending.url,

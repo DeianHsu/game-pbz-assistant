@@ -13,6 +13,7 @@ namespace PBZ.Native
     internal sealed class Window : Form
     {
         static readonly string[] Pages = { "行前检查", "地图收集", "全收集品", "任务路线", "成就", "小张珍宝", "资料来源" };
+        const string FailedQuestsLabel = "已失败或中断";
         static readonly Color Background = Color.FromArgb(22, 29, 37);
         static readonly Color Ink = Color.FromArgb(30, 40, 48);
         static readonly Color Muted = Color.FromArgb(82, 99, 108);
@@ -265,7 +266,7 @@ namespace PBZ.Native
             switch (page)
             {
                 case 0:
-                    filters = Options("当前待办", "需现场核对", "关联成就", "全部阶段", "已满足");
+                    filters = Options("当前待办", "需现场核对", "关联成就", "全部阶段", "已满足", FailedQuestsLabel);
                     break;
                 case 1:
                     filters = Options("当前可查", "暂不可取", "已收集", "全部点位");
@@ -285,7 +286,7 @@ namespace PBZ.Native
                     }
                     break;
                 case 3:
-                    filters = Options("当前目标", "风险优先", "暂不可触发", "已完成", "全部任务");
+                    filters = Options("当前目标", "风险优先", "暂不可触发", "已完成", "全部任务", "可接取但未接");
                     if (navigation != null)
                     {
                         regions = new[] { Option("", "全部地区") }.Concat(navigation.Quests.SelectMany(q => q.Rows("targets"))
@@ -313,27 +314,52 @@ namespace PBZ.Native
         static string Labelled(string label, string value) { return value == "" ? "" : label + "  " + value; }
         static string Steps(IEnumerable<string> steps) { return Lines(steps.Where(step => step != "").Select((step, i) => (i + 1) + ". " + step).ToArray()); }
         static string Sources(params string[] sources) { return Lines(sources.Where(s => s != "").Distinct().ToArray()); }
-        string AchievementNames(Row row)
+        string AchievementNames(IEnumerable<string> ids)
         {
-            return string.Join("、", row.Strings("achievements").Select(id => progress.Achievements.FirstOrDefault(a => a.S("id") == id).S("name").Or(id)));
+            return string.Join("、", ids.Select(id => progress.Achievements.FirstOrDefault(a => a.S("id") == id).S("name").Or(id)));
+        }
+        IEnumerable<ViewRow> FailedQuestRows(string mode)
+        {
+            foreach (Row quest in progress.QuestFailures.Values)
+            {
+                string id = quest.S("id"), name = quest.S("name"), state = quest.S("stateLabel");
+                var gates = progress.Gates.Where(g => g.Rows("items").Any(i => i.S("quest") == id)).ToArray();
+                var checks = gates.SelectMany(g => g.Rows("items")).Where(i => i.S("quest") == id).ToArray();
+                string[] achievements = Progress.Guides.Get("questAchievements").Strings(id).Concat(checks.SelectMany(i => i.Strings("achievements"))).Distinct().ToArray();
+                if (mode == "2" && achievements.Length == 0) continue;
+                var failure = quest.Get("failure");
+                string reason = failure.S("reason"), achievementNames = AchievementNames(achievements);
+                string detailText = Lines(name + " · " + state, Labelled("原因", reason), failure.S("action"),
+                    Labelled("关联检查", string.Join("、", gates.Select(g => g.S("name")))), Labelled("关联成就", achievementNames),
+                    Lines(checks.Select(i => i.S("impact")).Distinct().ToArray()), Labelled("存档依据", failure.S("evidence")), failure.S("source"));
+                yield return new ViewRow(new[] { name, state, reason, achievementNames }, detailText, FailedQuestsLabel) {
+                    Warning = true, Achievement = achievements.FirstOrDefault()
+                };
+            }
         }
         IEnumerable<ViewRow> RiskRows(string mode)
         {
+            if (mode == "0" || mode == "2" || mode == "3" || mode == "5")
+                foreach (ViewRow failure in FailedQuestRows(mode)) yield return failure;
+            if (mode == "5") yield break;
             foreach (Row gate in progress.Gates)
             {
                 if (mode != "3" && (!gate.Flag("available") || gate.Flag("planning") && !(gate.S("id") == "cleanup" && progress.StageInfo.Flag("finished")))) continue;
                 foreach (Row item in gate.Rows("items"))
                 {
+                    if (item.Get("failure") != null) continue;
                     bool done = item.Flag("satisfied");
                     if (mode != "3" && !item.Flag("available") || mode == "4" && !done || mode != "3" && mode != "4" && done) continue;
                     if (mode == "1" && item.S("mode") != "manual" || mode == "2" && item.Strings("achievements").Length == 0) continue;
+                    string achievements = AchievementNames(item.Strings("achievements"));
                     string detailText = Lines(item.S("title"), gate.S("note"), item.S("action"), Labelled("进度", item.S("progress")),
+                        Labelled("附近铃铛", item.S("bell")),
                         Labelled("当前目标", string.Join("、", item.Strings("current"))), Labelled("判断依据", item.S("evidence")),
-                        Labelled("关联成就", AchievementNames(item)), item.S("impact"), item.S("riskNote"), item.S("verification"),
+                        Labelled("关联成就", achievements), item.S("impact"), item.S("riskNote"), item.S("verification"),
                         Lines(item.Rows("riskDetails").Select(d => Lines(d.S("label") + " · " + d.S("text"), Labelled("附近铃铛", d.S("bell")), d.S("route"), d.S("flower"))).ToArray()),
-                        Sources(item.S("source"), item.Rows("riskDetails").Length == 0 ? "" : Progress.Guides.Get("sources").Get("chivalry").S("url")));
+                        Sources(item.S("source"), item.S("otherSource"), item.Rows("riskDetails").Length == 0 ? "" : Progress.Guides.Get("sources").Get("chivalry").S("url")));
                     string state = done ? "已满足" : gate.Flag("passed") ? "已跨过，需复核" : item.S("stateLabel");
-                    yield return new ViewRow(new[] { item.S("title"), state, item.S("progress"), AchievementNames(item) }, detailText, gate.S("name")) {
+                    yield return new ViewRow(new[] { item.S("title"), state, item.S("progress"), achievements }, detailText, gate.S("name")) {
                         Warning = !done && (gate.Flag("passed") || item.S("state") == "failed"),
                         Achievement = item.Strings("achievements").FirstOrDefault(), Gate = gate.S("id")
                     };
@@ -375,27 +401,45 @@ namespace PBZ.Native
             string map = Selected(region), kind = Selected(category);
             foreach (Row quest in navigation.Quests.OrderBy(q => q.S("riskLevel") == "urgent" ? 0 : q.S("riskLevel") == "warning" ? 1 : 2))
             {
-                bool done = quest.S("state") == "done";
-                if (kind != "" && quest.S("type") != kind || mode == "3" && !done || mode != "3" && mode != "4" && done) continue;
+                bool done = quest.S("state") == "done" && !quest.Flag("actionable");
+                bool canAccept = quest.Flag("canAccept");
+                if (kind != "" && quest.S("type") != kind || mode == "5" && !canAccept ||
+                    mode == "3" && !done || mode != "3" && mode != "4" && done) continue;
                 var targets = quest.Rows("targets");
                 if (targets.Length == 0 && (mode == "3" || mode == "4")) targets = new[] { Data.Make("mapName", done ? "已完成" : "当前无需处理") };
-                foreach (Row target in targets)
+                var destinations = targets.GroupBy(t => new
                 {
+                    Map = t.S("mapId"), Area = t.S("area"), Person = t.S("person"), Place = t.S("place"), Bell = t.S("bell"),
+                    Point = t.S("pointKey"), State = t.Get("access").S("state"), Label = t.Get("access").S("label"),
+                    UnlocatedBranch = t.S("mapId") == "unknown" ? t.S("branchId") : ""
+                });
+                foreach (var destination in destinations)
+                {
+                    Row target = destination.First();
                     if (map != "" && target.S("mapId") != map) continue;
                     Row access = target.Get("access").Dict();
                     bool blocked = access.S("state") == "locked" || access.S("state") == "unknown";
                     bool risk = quest.S("riskLevel") == "urgent" || quest.S("riskLevel") == "warning";
-                    if (mode == "0" && (!quest.Flag("recorded") || blocked) || mode == "1" && !risk || mode == "2" && !blocked) continue;
+                    if (mode == "0" && (!(quest.Flag("recorded") || quest.Flag("actionable") || canAccept) || blocked) ||
+                        mode == "1" && !risk || mode == "2" && !blocked) continue;
                     Row[] risks = quest.Rows("risks").Where(r => r.S("level") != "future" || mode == "4").ToArray();
                     string achievement = string.Join("、", Progress.Guides.Get("questAchievements").Strings(quest.S("id")).Select(id =>
                         progress.Achievements.FirstOrDefault(a => a.S("id") == id).S("name").Or(id)));
-                    string text = Lines(quest.S("name") + " · " + quest.S("stateLabel"), Labelled("目标", target.S("objective")),
-                        Labelled("人物或触发点", target.S("person")), Labelled("附近铃铛", target.S("bell")), target.S("details"),
-                        target.S("next"), access.S("reason"), Labelled("关联成就", achievement),
-                        Lines(risks.Select(r => Lines("风险 · " + r.S("gateName") + " · " + r.S("title"), r.S("action"), r.S("impact"))).ToArray()),
-                        Sources(new[] { target.S("source") }.Concat(risks.Select(r => r.S("source"))).ToArray()));
-                    yield return new ViewRow(new[] { quest.S("name"), quest.S("stateLabel"), target.S("person"), access.S("label"), risk ? "需留意" : "" },
-                        text, target.S("mapName").Or("目标地区待定位")) { Warning = risk, Gate = risks.FirstOrDefault().S("gateId") };
+                    string objectives = Lines(destination.Select(t => Labelled("目标", t.S("objective"))).Distinct().ToArray());
+                    string guidance = Lines(destination.SelectMany(t => new[] { t.S("details"), t.S("next"), t.Get("access").S("reason") }).Distinct().ToArray());
+                    string text = Lines(quest.S("name") + " · " + quest.S("stateLabel"), objectives,
+                        Labelled(canAccept ? "接取人物或触发物" : "人物或触发点", target.S("person")),
+                        canAccept ? Labelled("接取地点", target.S("area") + " · " + target.S("place")) : "",
+                        Labelled("附近铃铛", target.S("bell")), guidance,
+                        Labelled("风险", target.S("warning")), Labelled("关联成就", achievement),
+                        Lines(risks.Select(r => Lines((r.S("check") == "bai-xue" ? "检查 · " : "风险 · ") + r.S("gateName") + " · " + r.S("title"),
+                            destination.Any(t => r.S("action") == t.S("next")) ? "" : r.S("action"), r.S("impact"))).ToArray()),
+                        Sources(destination.Select(t => t.S("source")).Concat(risks.Select(r => r.S("source"))).ToArray()));
+                    string person = canAccept ? target.S("person") + " · " + target.S("place") : target.S("person");
+                    string group = target.S("mapName").Or("目标地区待定位");
+                    if (canAccept && mode != "5") group += " · 可接取";
+                    yield return new ViewRow(new[] { quest.S("name"), quest.S("stateLabel"), person, access.S("label"), risk ? "需留意" : "" },
+                        text, group) { Warning = risk, Gate = risks.FirstOrDefault().S("gateId") };
                 }
             }
         }
@@ -458,13 +502,13 @@ namespace PBZ.Native
             {
                 switch (page)
                 {
-                    case 0: columns = new[] { "待办检查", "状态", "进度", "关联成就" }; rows = RiskRows(mode); break;
+                    case 0: columns = new[] { "任务或检查", "状态", "进度或原因", "关联成就" }; rows = RiskRows(mode); break;
                     case 1: columns = new[] { "收集品", "收集状态", "路线状态", "最近铃铛", "地区" }; rows = CollectionRows(mode, false); break;
                     case 2:
                         columns = new[] { "收集品", "意识尘埃", "武器材料", "收集状态", "路线状态", "最近铃铛", "地区" };
                         rows = CollectionRows(mode, true);
                         break;
-                    case 3: columns = new[] { "任务", "日志状态", "人物或触发点", "可用情况", "风险" }; rows = QuestRows(mode); break;
+                    case 3: columns = new[] { "任务", "任务状态", "人物或触发点", "可用情况", "风险" }; rows = QuestRows(mode); break;
                     case 4: columns = new[] { "成就", "可用情况", "达成要求", "进度" }; rows = AchievementRows(mode); break;
                     case 5: columns = new[] { "珍宝或地区", "状态", "进度" }; rows = TreasureRows(mode); break;
                     case 6:
@@ -498,7 +542,7 @@ namespace PBZ.Native
                 {
                     int width = page == 2 && progress != null ? CollectionWidths[i]
                         : i == 0 ? 245 : columns[i] == "人物或触发点" || columns[i] == "关联成就" ? 250
-                        : columns[i] == "来源" ? 490 : columns[i] == "达成要求" ? 320 : columns[i] == "最近铃铛" ? 168 : 136;
+                        : columns[i] == "来源" ? 490 : columns[i] == "进度或原因" || columns[i] == "达成要求" ? 320 : columns[i] == "最近铃铛" ? 168 : 136;
                     list.Columns.Add(columns[i] + (sort == i ? descending ? " ↓" : " ↑" : ""), width);
                 }
                 var groups = new Dictionary<string, ListViewGroup>();
@@ -521,12 +565,14 @@ namespace PBZ.Native
                 }
                 if (list.Items.Count > 0) list.Items[0].Selected = true;
                 string subtitle = "";
+                if (page == 0 && progress != null && (progress.QuestFailures.Count > 0 || mode == "5")) subtitle = progress.QuestFailures.Count + " 项" + FailedQuestsLabel;
                 if (page == 1 && collections != null)
                 {
                     Row map = collections.Regions.FirstOrDefault(r => r.S("id") == Selected(region));
                     if (map != null) subtitle = map.S("name") + " · " + map.N("done") + "/" + map.N("total") + " 已收集";
                 }
                 if (page == 2 && collections != null) subtitle = collections.Items.Count(i => i.S("state") == "done") + "/" + collections.Items.Length + " 已收集";
+                if (page == 3 && navigation != null && mode == "5") subtitle = list.Items.Count + " 项可接取";
                 if (page == 4 && achievementPlans != null) subtitle = achievementPlans.Count(a => a.S("availability") == "done") + "/" + achievementPlans.Length + " 已解锁  ·  " +
                     achievementPlans.Count(a => a.S("availability") == "ready") + " 前置已满足  ·  " + achievementPlans.Count(a => a.S("availability") == "locked") + " 暂不可取";
                 title.Text = Pages[page] + (subtitle == "" ? "" : "   /   " + subtitle);
@@ -537,7 +583,8 @@ namespace PBZ.Native
         void ShowDetails()
         {
             var selected = list.SelectedItems.Count == 0 ? null : list.SelectedItems[0].Tag as ViewRow;
-            detail.Text = selected == null ? progress == null ? "正在等待存档数据。可按 F5 重新读取。" : "当前筛选没有条目。" : selected.Text +
+            string empty = page == 3 && Selected(filter) == "5" && list.Items.Count == 0 ? "当前筛选没有已核对可接的未接任务。" : "当前筛选没有条目。";
+            detail.Text = selected == null ? progress == null ? "正在等待存档数据。可按 F5 重新读取。" : empty : selected.Text +
                 (page == 0 && selected.Achievement != null ? "\r\n\r\n双击列表条目查看关联成就。" :
                     (page == 3 || page == 4) && !string.IsNullOrEmpty(selected.Gate) ? "\r\n\r\n双击列表条目查看关联行前检查。" : "");
         }

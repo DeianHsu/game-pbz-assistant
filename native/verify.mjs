@@ -49,13 +49,19 @@ for (const [index, account] of old.accounts.entries()) for (const state of accou
     continue;
   }
   compare('stage', slot, slot, state.stage.rank, next.stage);
+  compare('bai xue route', slot, '', [state.baiXueStep.id, state.baiXueStep.title || '', state.baiXueStep.bell || ''], next.baiXueStep);
   rows('gates', slot, state.gates.map(g => [g.id, !!g.available, !!g.passed,
     g.items.map(i => [!!i.available, !!i.satisfied, i.state])]), next.gates);
+  rows('quest failures', slot, state.questFailures.map(q => [q.id, q.state, q.failure.reason, q.failure.evidence]), next.questFailures);
   rows('region totals', slot, state.collections.regions.map(r => [r.id, r.done, r.total]), next.regions.map(r => r.slice(0, 3)));
   rows('map points', slot, state.collections.regions.flatMap(r => r.points.map(p => [p.key, p.name, p.state, p.access.state])), next.regions.flatMap(r => r[3]));
   rows('collectibles', slot, state.collectibles.items.map(i => [i.key, i.state, i.access.state]), next.collectibles);
   rows('achievements', slot, state.achievements.rows.map(a => [a.id, a.state, a.progress?.value ?? null]), next.achievements);
   rows('treasures', slot, state.achievements.treasures.map(t => [t.branch, t.handedIn, t.collected]), next.treasures);
+  rows('quest offers', slot, state.quests.filter(q => q.canAccept).map(q => {
+    const [t] = q.navigation.targets;
+    return [q.id, q.stateLabel, t.area, t.person, t.place, t.bell, t.next];
+  }), next.questOffers);
   rows('quest targets', slot, state.quests.map(q => [q.id, q.state, q.navigation.riskLevel,
     q.navigation.targets.map(t => [t.mapId, t.person, t.access.state])]), next.quests);
 }

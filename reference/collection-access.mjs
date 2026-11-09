@@ -36,6 +36,13 @@ function complete(slot, id) {
   if (!q) return Array.isArray(slot.Narrative?.NarrativeSavedQuests) ? false : null;
   return ['EQuestCompletion::QC_Succeded', 'EQuestCompletion::QC_Succeeded'].includes(q.QuestCompletion);
 }
+export function baiXueNecklaceGiven(slot) {
+  const q = quest(slot, 'BaiXue'), acquired = itemAcquired(slot, 'I_10003');
+  const amount = slot.Inventory?.InventoryInfos?.I_10003?.CurrentAmount;
+  return any(complete(slot, 'BaiXue'), branch(slot, 'BaiXue', '2'),
+    started(q) && q.QuestBranches?.some(b => b.BranchID === '3' && b.BranchType === 'EBranchType::BranchActivating') === true,
+    acquired === true ? Number.isInteger(amount) ? amount === 0 : null : acquired);
+}
 function killed(slot, id) {
   if (!slot.BossRecord || !Number.isInteger(slot.PBZGameSystem?.CycleCount)) return null;
   const cycle = slot.PBZGameSystem.CycleCount;
@@ -63,9 +70,11 @@ export function routeAccess(route, slot) {
     huangKey: ['在幻鬼酒馆向牛掌柜取得黄家大宅钥匙', () => itemAcquired(slot, 'K_05011')],
     genKey: ['取得老根头家的黄铜钥匙', () => itemAcquired(slot, 'K_05004')],
     cellar: ['取得后街秘密地窖开关', () => itemAcquired(slot, 'K_06006')],
-    courtyard: ['在枷笼山赎罪名单后续取得庞镇后街小院钥匙', () => itemAcquired(slot, 'K_05007')],
+    courtyard: ['在枷笼山赎罪名单后续取得庞镇后街小院钥匙', () => any(itemAcquired(slot, 'K_05007'), baiXueNecklaceGiven(slot))],
     necklace: ['取得沾血的项链，推进白雪儿回访', () => itemAcquired(slot, 'I_10003')],
-    digTree: ['推进白雪儿至老槐树可以挖掘', () => tag(slot, 'pz.老槐树.可以挖掘')],
+    baiXueNecklaceGiven: ['到后街小院卧房给白雪儿戴上沾血的项链', () => baiXueNecklaceGiven(slot)],
+    baiXueSecondPetal: ['先拾取床边第一片花瓣，关闭拾取提示', () => any(tag(slot, 'pz.老槐树.解锁记忆之花'), itemAcquired(slot, 'F_06004'))],
+    digTree: ['拾取院内第二片花瓣，关闭拾取提示后查看老槐树', () => any(tag(slot, 'pz.老槐树.可以挖掘'), itemAcquired(slot, 'F_06022'), complete(slot, 'BaiXue'))],
     pipa: ['集齐三个部件并修复幻术琵琶', () => any(tag(slot, 'quest.幻术琵琶.组装好'), complete(slot, 'HuanShuPiPa'))],
     zhouLetter: ['在枷笼山取得周平子的遗书', () => any(itemAcquired(slot, 'R_070017'), tag(slot, 'ddsd.周平子.获得遗书'), tag(slot, 'ddsd.周平子.交付遗书'))],
     lanPassage: ['完成兰家大少的密道告知，再回庞镇接续', () => any(branch(slot, 'LanJiaGongZi', '2'), itemAcquired(slot, 'K_06002'), complete(slot, 'LanJiaGongZi'))],

@@ -11,6 +11,7 @@ function save() {
 }
 const check = (s, id) => analyzeSlot(s, catalog).gates.flatMap(g => g.items).find(i => i.quest === id && i.check);
 const add = (s, id, category = 'InventoryInfos', cycle = 1) => s.Inventory[category][id] = { AcquiredCycle: cycle, CurrentAmount: 0, MaxAmount: 1 };
+const snowCheck = result => result.gates.find(g => g.id === 'mountain').items.find(i => i.check === 'bai-xue');
 
 test('不灭侠胆的前置阶段自动读取任务状态，不一概要求现场核对', () => {
   const s = save(), q = quest('BuMieXiaDan');
@@ -88,14 +89,55 @@ test('周平子开笼、遗书或有效任务可自动证明救人，未记录�
   s.Narrative.NarrativeSavedQuests.push(quest('WuXiangWang', 'Failed'));
   assert.equal(check(s, 'WuXiangWang').satisfied, false);
 });
-test('白雪儿后续或最终奖励已确认时收起陈柱选项，赎罪名单结束本身不够', () => {
+test('赎罪名单结束后提示人偶，白雪儿完成或本周目已得雪与血时收起', () => {
   const s = save(); s.Narrative.NarrativeSavedQuests.push(quest('YongShengDaoZhu', 'Succeded'));
-  assert.equal(check(s, 'YongShengDaoZhu').mode, 'manual');
-  assert.equal(check(s, 'YongShengDaoZhu').taskState, 'done');
+  let a = analyzeSlot(s, catalog);
+  assert.equal(a.baiXueStep.id, 'puppet');
+  assert.equal(snowCheck(a).satisfied, false);
   add(s, 'AC_Bleed', 'AccessoryInfos');
-  assert.equal(check(s, 'YongShengDaoZhu').satisfied, true);
+  assert.equal(snowCheck(analyzeSlot(s, catalog)).satisfied, true);
   s.Inventory.AccessoryInfos.AC_Bleed.AcquiredCycle = 0;
-  assert.equal(check(s, 'YongShengDaoZhu').satisfied, false);
+  assert.equal(snowCheck(analyzeSlot(s, catalog)).satisfied, false);
+  s.Narrative.NarrativeSavedQuests.push(quest('BaiXue', 'Succeded'));
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'done');
+});
+test('捡到赎罪名单即给出交付路线，交战选项跟踪铁面杀手与人偶', () => {
+  const s = save();
+  assert.equal(snowCheck(analyzeSlot(s, catalog)).available, false);
+  s.PBZGameSystem.CurrentLevelName = 'PBZ_DengDingShanDao_WP';
+  add(s, 'R_070002');
+  const a = analyzeSlot(s, catalog), r = snowCheck(a);
+  assert.equal(a.baiXueStep.id, 'deliver');
+  assert.equal(r.available, true);
+  assert.equal(r.quest, 'YongShengDaoZhu');
+  assert.equal(r.bell, '宗祠外山门');
+  assert.match(r.action, /洗去你的罪孽.*放他一条生路/);
+  s.EventPipeline.GlobalTags.push('ddsd.杀气怪面.不放走');
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'fight');
+  s.EventPipeline.GlobalTags.push('ddsd.杀气怪面.死亡');
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'puppet');
+});
+test('陈柱离开后按当周目钥匙、项链和两片花瓣追踪，允许没有任务日志', () => {
+  const s = save(), tags = s.EventPipeline.GlobalTags;
+  tags.push('ddsd.杀气怪面.放走');
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'spared');
+  add(s, 'K_05007'); add(s, 'I_10003', 'InventoryInfos', 0);
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'spared', '上周目的项链不能解锁本周目小院流程');
+  s.Inventory.InventoryInfos.I_10003 = { AcquiredCycle: 1, CurrentAmount: 1, MaxAmount: 1 };
+  let a = analyzeSlot(s, catalog);
+  assert.equal(a.baiXueStep.id, 'home');
+  assert.equal(a.baiXueStep.bell, '青蛇屋');
+  assert.deepEqual(a.questFailures, []);
+  s.Inventory.InventoryInfos.I_10003.CurrentAmount = 0;
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'petal1');
+  add(s, 'F_06004');
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'petal2');
+  add(s, 'F_06022');
+  a = analyzeSlot(s, catalog);
+  assert.equal(a.baiXueStep.id, 'tree');
+  assert.match(snowCheck(a).progress, /2\/2.*雪与血待领取/);
+  add(s, 'AC_Bleed', 'AccessoryInfos');
+  assert.equal(analyzeSlot(s, catalog).baiXueStep.id, 'done');
 });
 test('勿相忘早期线索不能代替救人，已经进入遗书交付分支才可作为证明', () => {
   const s = save(), q = quest('WuXiangWang');
@@ -104,4 +146,59 @@ test('勿相忘早期线索不能代替救人，已经进入遗书交付分支�
   assert.equal(check(s, 'WuXiangWang').satisfied, false);
   q.QuestBranches = [{ BranchID: '1', BranchType: 'EBranchType::BranchActivating' }];
   assert.equal(check(s, 'WuXiangWang').satisfied, true);
+});
+
+test('小翠以吊笼死亡判定中断，保留荒行子战前和已获救的进度', () => {
+  const s = save(), q = quest('XiaoCui');
+  q.CompletedBranches = ['1', '2', '2-ex'];
+  q.QuestBranches = [{ BranchID: '3', BranchType: 'EBranchType::BranchActivating' }];
+  s.Narrative.NarrativeSavedQuests.push(q);
+  const tags = s.EventPipeline.GlobalTags;
+  tags.push('fzmd.小翠.死亡', 'ddsd.开门.独木桥', 'ddsd.击杀.荒行子2');
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures, [], '跨节点和小翠的剧情死亡都不等于吊笼救人失败');
+  tags.pop();
+  tags.push('ddsd.陆三迁2.死亡');
+  let result = analyzeSlot(s, catalog);
+  assert.deepEqual(result.questFailures.map(q => [q.id, q.state]), [['XiaoCui', 'interrupted']]);
+  assert.match(result.questFailures[0].failure.reason, /吊笼中死亡.*独木桥/);
+  assert.doesNotMatch(result.questFailures[0].failure.reason, /击败荒行子/);
+  assert.ok(result.gates.find(g => g.id === 'mountain').items.filter(i => i.quest === 'XiaoCui').every(i => i.failure?.state === 'interrupted'));
+  tags.push('ddsd.击杀.荒行子2');
+  assert.match(analyzeSlot(s, catalog).questFailures[0].failure.reason, /此档也已击败荒行子/);
+  q.QuestBranches[0].BranchType = 'EBranchType::BranchCompleted';
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures, [], '已有救人分支，不能按未救出报中断');
+});
+
+test('行前检查收录清单外的原生失败任务，缺少原因时明确标注', () => {
+  const s = save();
+  const q = quest('OtherSideQuest', 'Failed');
+  q.CompletedBranches = ['1'];
+  s.Narrative.NarrativeSavedQuests.push(q, quest('BaiXue', 'Failed'));
+  const result = analyzeSlot(s, catalog);
+  assert.deepEqual(result.questFailures.map(q => q.id), ['OtherSideQuest', 'BaiXue']);
+  assert.equal(result.questFailures[0].stateLabel, '已失败');
+  assert.match(result.questFailures[0].failure.reason, /未记录具体原因/);
+  assert.ok(!result.currentQuestIds.includes('BaiXue'));
+});
+
+test('青蛇屋和陆家村的中断事件只影响未完成对应步骤的任务', () => {
+  const s = save(), tears = quest('QiShengHeLai'), flower = quest('XueRouHua');
+  s.Narrative.NarrativeSavedQuests.push(tears, flower, quest('NanYanZhiYin', 'Succeded'));
+  s.EventPipeline.GlobalTags.push('quest.任务中断.进入青蛇屋外围', 'quest.任务中断.抵达陆家村', 'quest.一个不留.营地变怪');
+  tears.CompletedBranches = ['3'];
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures.map(q => q.id), ['QiShengHeLai', 'XueRouHua']);
+  tears.CompletedBranches.push('4');
+  flower.CompletedBranches = ['1'];
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures, []);
+});
+
+test('周平子开门失败不代表任务中断，遗书交付能证明救人步骤已过去', () => {
+  const s = save(), q = quest('WuXiangWang');
+  s.Narrative.NarrativeSavedQuests.push(q);
+  s.EventPipeline.GlobalTags.push('ddsd.周平子.开门失败');
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures, []);
+  s.EventPipeline.GlobalTags.push('ddsd.周平子.死亡');
+  assert.match(analyzeSlot(s, catalog).questFailures[0].failure.reason, /周平子在获救前死亡/);
+  q.QuestBranches = [{ BranchID: '1', BranchType: 'EBranchType::BranchActivating' }];
+  assert.deepEqual(analyzeSlot(s, catalog).questFailures, []);
 });

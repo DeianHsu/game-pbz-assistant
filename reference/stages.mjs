@@ -20,6 +20,8 @@ export function detectStage(slot) {
   for (const [pattern, stage] of [[/PangZhen|HouJie/i, 4], [/MeiGu/i, 5], [/DengDing|JiaLong/i, 6], [/XiMeng/i, 7], [/DuanHun|HunDuan/i, 8]]) {
     if (regions.some(region => pattern.test(region))) rank = Math.max(rank, stage);
   }
+  const xinZhiZongJi = quests.get('MainCh2-XinZhiZongJi');
+  const approachingEstate = started(xinZhiZongJi) && active(xinZhiZongJi, 'S5') === true;
   const estate = quests.get('MainCh3-PoJu');
   const afterEstate = done(estate) || completed(estate, '2') || active(estate, '3');
   if (completed(estate, '1') || active(estate, '2')) rank = Math.max(rank, 7);
@@ -28,7 +30,7 @@ export function detectStage(slot) {
   const lu = quests.get('MainCh1-ShiXinCun');
   const afterMu = killed('BP_Monster_MuXiaoKui') || killed('BP_Monster_MuXiaoKui_P2') || done(lu) || active(lu, '4') || completed(lu, '4');
   return { rank, name: names[rank], location, regions, afterMu, afterEstate,
-    readyForEstate: started(estate), afterCrusher: tags.has('achievment.锯理力争.完成'), finished: rank === 9 };
+    readyForEstate: started(estate), approachingEstate, afterCrusher: tags.has('achievment.锯理力争.完成'), finished: rank === 9 };
 }
 
 const minimumStage = {
@@ -44,7 +46,7 @@ export function isGateAvailable(id, stage) {
   if (id === 'crusher-reward' && !stage.afterCrusher) return false;
   // Optional exploration can reach the camp before the Pangzhen story chapter.
   if (['qixing', 'baishan', 'chivalry'].includes(id) && /Zhengdaodaying/i.test(stage.location)) return true;
-  if (['qingshe', 'mirage'].includes(id) && stage.readyForEstate) return true;
+  if (['qingshe', 'mirage'].includes(id) && (stage.approachingEstate || stage.readyForEstate)) return true;
   if (['snow', 'sanmian'].includes(id) && stage.afterEstate) return true;
   return stage.rank >= (minimumStage[id] ?? Infinity);
 }
@@ -52,6 +54,6 @@ export function isGateAvailable(id, stage) {
 export function stageGate(gate, stage) {
   const available = isGateAvailable(gate.id, stage);
   const items = gate.items.map(item => ({ ...item, available: available && (gate.id !== 'treasures' || stage.rank >= treasureStages[item.branch]) }));
-  const current = items.filter(i => i.available && !i.optional && !i.satisfied);
+  const current = items.filter(i => i.available && !i.optional && !i.satisfied && !i.failure);
   return { ...gate, available, items, currentPending: current.length, currentManual: current.filter(i => i.mode === 'manual').length };
 }

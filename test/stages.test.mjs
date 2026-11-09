@@ -41,6 +41,24 @@ test('小张交付清单仅开放已到阶段的地区', () => {
   const gate = analyzeSlot(slot(), catalog).gates.find(g => g.id === 'treasures');
   assert.deepEqual(gate.items.filter(i => i.available).map(i => i.branch), ['1-1', '3-1']);
 });
+test('心之踪迹指向青蛇屋密道时显示山庄前待办，保留当前阶段', () => {
+  const s = slot('MainCh2-XinZhiZongJi', 'PBZ_Pangzhen_WP');
+  s.MapSubsystem = { UnLockMaskInfos: { MeiGuHu: { 0: ['fog'] } } };
+  const [main] = s.Narrative.NarrativeSavedQuests;
+  main.QuestBranches = [{ BranchID: 'S2', BranchType: 'EBranchType::BranchActivating' }];
+  assert.equal(isGateAvailable('mirage', detectStage(s)), false);
+
+  main.QuestBranches[0].BranchID = 'S5';
+  s.Narrative.NarrativeSavedQuests.push(quest('HuXinMiMi'));
+  const result = analyzeSlot(s, catalog);
+  const mirage = result.gates.find(g => g.id === 'mirage');
+  assert.equal(result.stage.rank, 5);
+  assert.equal(result.stage.readyForEstate, false);
+  assert.equal(mirage.passed, false);
+  assert.ok(mirage.items.some(i => i.quest === 'HuXinMiMi' && i.available && !i.satisfied));
+  assert.equal(result.gates.find(g => g.id === 'qingshe').available, true);
+  for (const id of ['opera', 'snow', 'ending']) assert.equal(result.gates.find(g => g.id === id).available, false, id);
+});
 test('山庄之后回访使用主线证据，不因返回森林撤销阶段', () => {
   const s = slot('MainCh3-PoJu', 'PBZ_Fujizhilin_WP');
   s.Narrative.NarrativeSavedQuests[0].QuestCompletion = 'EQuestCompletion::QC_Succeded';

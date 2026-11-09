@@ -71,6 +71,8 @@ namespace PBZ.Native
                 new { Pattern = "DengDing|JiaLong", Rank = 6 }, new { Pattern = "XiMeng", Rank = 7 },
                 new { Pattern = "DuanHun|HunDuan", Rank = 8 } })
                 if (regions.Any(region => Regex.IsMatch(region, item.Pattern, RegexOptions.IgnoreCase))) rank = Math.Max(rank, item.Rank);
+            object xinZhiZongJi = questById("MainCh2-XinZhiZongJi");
+            bool approachingEstate = Started(xinZhiZongJi) && Active(xinZhiZongJi, "S5");
             object estate = questById("MainCh3-PoJu");
             bool afterEstate = Done(estate) || Completed(estate, "2") || Active(estate, "3");
             if (Completed(estate, "1") || Active(estate, "2") || afterEstate) rank = Math.Max(rank, 7);
@@ -80,7 +82,7 @@ namespace PBZ.Native
             bool afterCrusher = Array(Get(Get(slot, "EventPipeline"), "GlobalTags")).Any(x => Text(x) == "achievment.锯理力争.完成");
             return new Dictionary<string, object> {
                 { "rank", rank }, { "name", Names[rank] }, { "location", location }, { "regions", regions.ToArray() },
-                { "afterMu", afterMu }, { "afterEstate", afterEstate }, { "readyForEstate", Started(estate) },
+                { "afterMu", afterMu }, { "afterEstate", afterEstate }, { "readyForEstate", Started(estate) }, { "approachingEstate", approachingEstate },
                 { "afterCrusher", afterCrusher }, { "finished", rank == 9 }
             };
         }
