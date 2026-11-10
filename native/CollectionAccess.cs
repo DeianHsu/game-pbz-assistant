@@ -67,8 +67,26 @@ namespace PBZ.Native
             return layer.Parent == null ? active : All(active, LayerActive(world, layer.Parent));
         }
 
+        bool? CheckEvidence(Row evidence)
+        {
+            string id = evidence.S("id");
+            switch (evidence.S("kind"))
+            {
+                case "tag": return p.Tag(id);
+                case "tags": return All(evidence.Strings("ids").Select(p.Tag).ToArray());
+                case "item": return Has(id, evidence.S("category"), evidence.Flag("possession"));
+                case "items": return HasAll(evidence.Strings("ids"));
+                case "killed": return p.Killed(id);
+                case "branch": return p.Branch(id, evidence.S("step"));
+                case "done": return p.Done(id);
+                default: return null;
+            }
+        }
         KeyValuePair<string, bool?> Check(string id)
         {
+            Row check = Guides.Get("pointChecks").Get(id) as Row;
+            if (check != null)
+                return new KeyValuePair<string, bool?>(check.S("title"), Any(check.Rows("evidence").Select(CheckEvidence).ToArray()));
             string title;
             bool? value;
             switch (id)
@@ -127,7 +145,11 @@ namespace PBZ.Native
             string quest = route.S("quest"), source = route.S("source");
             if (quest != "" && (p.State(quest) == "failed" || quest == "BuMieXiaDan" && p.Tag("pz.不灭侠胆.任务失败") == true))
                 return Result("locked", "存档明确记录相关任务已失败，请核对旧存档或下一周目。", source).With("label", "任务已失效");
+            var cutoff = route.Get("cutoff");
+            if (cutoff != null && p.Tag(cutoff.S("event")) == true && cutoff.Strings("unless").All(id => Check(id).Value == false))
+                return Result("locked", cutoff.S("reason"), source).With("label", "已错过");
             var checks = route.Strings("needs").Select(Check).ToArray();
+            if (checks.Length == 0) return Result("route", "此项可沿本区流程处理，详情列出了具体去处。", source);
             string[] blocked = checks.Where(c => c.Value == false).Select(c => c.Key).ToArray();
             string[] unknown = checks.Where(c => !c.Value.HasValue).Select(c => c.Key).ToArray();
             if (blocked.Length != 0) return Result("locked", "尚需：" + string.Join("；", blocked) + "。", source);
@@ -154,14 +176,15 @@ namespace PBZ.Native
         public Row ForPoint(Row point, bool regionOpen)
         {
             if (point.S("state") == "done") return Result("done", "该点已计入已收集。");
-            if (!regionOpen) return Result("locked", "此子区尚未开放，推进主线后再处理。");
             string map = point.S("rawMap").ToLowerInvariant(), id = point.S("id"), kind = point.S("kind");
             string key = kind + ":" + id.Or(point.N("order").ToString());
             bool nearby = point.Rows("nearest").FirstOrDefault().Flag("activated");
+            Row area = AreaRoute(map);
+            if (area != null && area.S("state") != "ready") return area;
+            if (!regionOpen) return Result("locked", "此子区尚未开放，推进主线后再处理。");
             Row route = PointRoute(point);
             if (route != null) return Route(route);
-            route = AreaRoute(map);
-            if (route != null) return route;
+            if (area != null) return area;
             if (map == "fujizhilin" && Ice.Contains(key))
                 return Gate(p.Tag("fjzl.风雪数据层.激活"), "需等血色森林冰封后回访杀气塔。", "冰封门槛已满足，可以回访杀气塔。", Source("forest"));
             if (map == "xigu" && (id == "Bell_QingDaoFu" || id == "F_12001"))
@@ -171,20 +194,17 @@ namespace PBZ.Native
                 return Route(Data.Make("needs", new[] { "heroic" }, "action", "持破碎的侠胆，在异变前帮助正道高手解脱并调查花瓣。", "quest", "BuMieXiaDan", "source", Source("camp")));
             if (map == "fujizhilin")
             {
-                if (id == "CiGuHunDun")
-                {
-                    bool? frozen = p.Tag("fjzl.风雪数据层.激活");
-                    if (frozen != true) return Gate(frozen, "需后期冰封和三面混沌的镜林战斗。", "", Source("forest"));
-                    return p.Tag("fjzl.三头魔偶.激活") == true ? Result("ready", "镜林三面魔偶已激活，继续三面混沌的当前目标。", Source("forest"))
-                        : Result("unknown", "冰封已开启，镜林最终战的开启记录尚未确认。", Source("forest"));
-                }
                 if (id == "F_02021") return Gate(p.Killed("BP_Monster_JingYe"), "先击败荆野，再查战场后方山崖下的尸体附近。", "花瓣在战场后方山崖下。", "https://www.18183.com/gonglue/202610/nlo97vjh.html");
                 if (kind == "banyan" && p.Quest("RongShuZhiXin") == null && p.KnownQuests)
                     return Result("locked", "先在血色森林找虚空大人接取榕树之心。", Source("forest"));
                 if (kind == "banyan" && p.Started("RongShuZhiXin") && nearby)
                     return Result("ready", "榕树之心已接取，迷雾消散处已到达。", Source("forest"));
+                if (kind == "banyan" && p.Started("RongShuZhiXin"))
+                    return Result("route", "榕树之心已接取。继续穿过迷雾森林，到迷雾消散处的人面榕树挑战。", Source("forest"));
                 if (kind == "pillar" && nearby && (Progress.BranchActive(p.Quest("XueMaiJueXing"), "1") || p.Tag("lz.龙柱.回忆起特殊杀气") == true))
                     return Result("ready", "血脉觉醒已开启试炼，附近铃铛已激活。", Source("forest"));
+                if (kind == "pillar")
+                    return Result("route", "沿镜林入口的洞道去龙柱，按血脉觉醒的试炼提示互动。", Source("forest"));
             }
             if (map == "lujiacun" && nearby && new[] { "medicine:GuiShen", "accessory:AC_SummonDuration", "amber:4" }.Contains(key))
                 return Result("ready", "附近区域已到达，攻略列为首次通行可取。", Source("lu"));

@@ -1,5 +1,6 @@
 // Access is separate from collection completion. A map visit is not proof that every door is open.
-import { pointAccessRoute, accessSources, physicalRouteSources } from './collection-access-data.mjs';
+import { pointAccessRoute, pointChecks, accessSources, physicalRouteSources } from './collection-access-data.mjs';
+import { itemRecord } from './item-record.mjs';
 const forestSource = 'https://www.powerpyx.com/phantom-blade-zero-crimson-forest-collectible-locations/';
 const valleySource = 'https://www.powerpyx.com/phantom-blade-zero-weeping-creek-valley-collectible-locations/';
 const luSource = 'https://www.powerpyx.com/phantom-blade-zero-village-of-lu-collectible-locations/';
@@ -12,7 +13,7 @@ const inventoryFields = { goods: 'InventoryInfos', weapon: 'MainWeaponInfos', ph
 function itemAcquired(slot, id, category = 'goods', possession = false) {
   const records = slot.Inventory?.[inventoryFields[category]], cycle = slot.PBZGameSystem?.CycleCount;
   if (!records || !Number.isInteger(cycle)) return null;
-  const item = records[id];
+  const item = itemRecord(records, category, id, true);
   if (!item) return false;
   if (possession) return true;
   return Number.isInteger(item.AcquiredCycle) ? item.AcquiredCycle === cycle : null;
@@ -47,6 +48,19 @@ function killed(slot, id) {
   if (!slot.BossRecord || !Number.isInteger(slot.PBZGameSystem?.CycleCount)) return null;
   const cycle = slot.PBZGameSystem.CycleCount;
   return Object.entries(slot.BossRecord[id]?.Records || {}).some(([key, record]) => key.startsWith(`${cycle}_`) && record.KillCount > 0);
+}
+function checkEvidence(slot, evidence) {
+  const { kind, id, category, possession, step } = evidence;
+  switch (kind) {
+    case 'tag': return tag(slot, id);
+    case 'tags': return every(...evidence.ids.map(id => tag(slot, id)));
+    case 'item': return itemAcquired(slot, id, category, possession);
+    case 'items': return every(...evidence.ids.map(id => itemAcquired(slot, id)));
+    case 'killed': return killed(slot, id);
+    case 'branch': return branch(slot, id, step);
+    case 'done': return complete(slot, id);
+    default: return null;
+  }
 }
 export function routeAccess(route, slot) {
   if (route.quest && (quest(slot, route.quest)?.QuestCompletion === 'EQuestCompletion::QC_Failed' || route.quest === 'BuMieXiaDan' && tag(slot, 'pz.不灭侠胆.任务失败') === true)) {
@@ -97,7 +111,17 @@ export function routeAccess(route, slot) {
       return any(q ? started(q) : Array.isArray(slot.Narrative?.NarrativeSavedQuests) ? false : null, layerReady);
     }]
   };
-  const required = route.needs.map(id => ({ id, text: checks[id][0], satisfied: checks[id][1]() }));
+  const evaluate = id => {
+    const check = pointChecks[id];
+    if (check) return { id, text: check.title, satisfied: any(...check.evidence.map(e => checkEvidence(slot, e))) };
+    return { id, text: checks[id]?.[0] || id, satisfied: checks[id]?.[1]() ?? null };
+  };
+  const cutoff = route.cutoff;
+  if (cutoff && tag(slot, cutoff.event) === true && cutoff.unless.every(id => evaluate(id).satisfied === false)) {
+    return { ...result('locked', cutoff.reason, route.source), label: '已错过' };
+  }
+  const required = route.needs.map(evaluate);
+  if (!required.length) return result('route', '此项可沿本区流程处理，详情列出了具体去处。', route.source);
   const blocked = required.filter(r => r.satisfied === false), unknown = required.filter(r => r.satisfied === null);
   const state = blocked.length ? 'locked' : unknown.length ? 'unknown' : 'ready';
   const reason = blocked.length ? '尚需：' + blocked.map(r => r.text).join('；') + '。'
@@ -108,16 +132,22 @@ export function routeAccess(route, slot) {
 
 export function collectionAccess(point, slot, regionOpen) {
   if (point.state === 'done') return result('done', '该点已计入已收集。');
-  if (!regionOpen) return result('locked', '此子区尚未开放；推进主线到该区域后再处理。');
   const map = point.rawMap.toLowerCase(), key = `${point.kind}:${point.id || point.order}`;
   const nearbyReached = point.nearest?.[0]?.activated === true;
-  const route = pointAccessRoute(point);
-  if (route) return routeAccess(route, slot);
-  if (map === 'meigu_yiji') return routeAccess({ needs: ['masks'], action: '四张灭法面具门槛已满足，可进入幻术师遗迹；内部继续按路线开门。', source: accessSources.lake }, slot);
   if (map === 'dengdingshandao') {
     const repaired = any(tag(slot, 'quest.幻术琵琶.组装好'), complete(slot, 'HuanShuPiPa'));
     if (repaired !== true) return gate(repaired, '先修复幻术琵琶，才能穿过梅谷湖雾门进入枷笼山。', '', accessSources.mountain, '读取幻术琵琶组装标记及任务完成记录。');
   }
+  if (map === 'zhengdaodaying') {
+    const hasKey = itemAcquired(slot, 'K_03002');
+    if (hasKey !== true) return gate(hasKey, '需“正道大营外门钥匙”打开入口，当前先不把营内收集当作可取。', '', luSource, '读取本周目 K_03002 的获取记录，不因处于同一关卡文件或附近铃铛而推定大门已开。');
+  }
+  const ruins = map === 'meigu_yiji' && routeAccess({ needs: ['masks'], action: '四张灭法面具门槛已满足，可进入幻术师遗迹；内部继续按路线开门。', source: accessSources.lake }, slot);
+  if (ruins && ruins.state !== 'ready') return ruins;
+  if (!regionOpen) return result('locked', '此子区尚未开放；推进主线到该区域后再处理。');
+  const route = pointAccessRoute(point);
+  if (route) return routeAccess(route, slot);
+  if (ruins) return ruins;
   if (map === 'fujizhilin' && icePoints.has(key)) {
     return gate(tag(slot, 'fjzl.风雪数据层.激活'), '需等血色森林冰封后回访杀气塔，当前先不用找。',
       '冰封门槛已满足，可以回访杀气塔；塔内仍需按路线开门、清敌。', forestSource,
@@ -127,18 +157,7 @@ export function collectionAccess(point, slot, regionOpen) {
     return gate(itemAcquired(slot, 'K_04902'), '需“人偶舌头”打开红房子内门；完成后续的梦差幻境三处传送门后再来。',
       '本周目已取得人偶舌头，可以回红房子开门；钥匙使用后数量归零仍算取得。', valleySource, '读取 Inventory.InventoryInfos.K_04902.AcquiredCycle，与当前周目比较。');
   }
-  if (map === 'zhengdaodaying') {
-    const hasKey = itemAcquired(slot, 'K_03002');
-    if (hasKey !== true) return gate(hasKey, '需“正道大营外门钥匙”打开入口，当前先不把营内收集当作可取。', '', luSource, '读取本周目 K_03002 的获取记录，不因处于同一关卡文件或附近铃铛而推定大门已开。');
-  }
   if (/^BPF_BuMieXiaDan_Memory_/.test(point.condition || '')) return routeAccess({ needs: ['heroic'], action: '持破碎的侠胆处理正道高手遭遇，在异变前帮助其解脱并调查花瓣。', source: accessSources.camp, quest: 'BuMieXiaDan' }, slot);
-  if (map === 'fujizhilin' && point.id === 'CiGuHunDun') {
-    const frozen = tag(slot, 'fjzl.风雪数据层.激活');
-    if (frozen !== true) return gate(frozen, '需后期冰封和三面混沌的镜林战斗；当前先推进主线。', '', forestSource, '三面魔偶出场流程 BPF_SanTouMoOuChuChang 引用冰封和溪谷初战标记。');
-    if (tag(slot, 'fjzl.三头魔偶.激活') === true) return result('ready', '镜林三面魔偶已激活，继续三面混沌的当前目标；特殊奖励仍须按要求使用炽刃。', forestSource, '读取 fjzl.三头魔偶.激活。');
-    const current = quest(slot, 'SanMianHunDun');
-    return result('unknown', `冰封已开启，但镜林最终战的开启记录尚未确认。${current && started(current) ? '请继续三面混沌的当前目标。' : '还需核对三面混沌路线。'}`, forestSource);
-  }
   if (map === 'fujizhilin' && point.id === 'F_02021') {
     return gate(killed(slot, 'BP_Monster_JingYe'), '先击败荆野，再查战场后方山崖下的尸体附近。',
       '本周目已击败荆野；花瓣在战场后方山崖下，不需要等冰封。', 'https://www.18183.com/gonglue/202610/nlo97vjh.html', '读取本周目 BP_Monster_JingYe 击杀记录，并核对具体花瓣位置。');
@@ -147,11 +166,13 @@ export function collectionAccess(point, slot, regionOpen) {
     const current = quest(slot, 'RongShuZhiXin');
     if (!current && Array.isArray(slot.Narrative?.NarrativeSavedQuests)) return result('locked', '先在血色森林与虚空大人对话，接取“榕树之心”后再挑战。', forestSource);
     if (started(current) && nearbyReached) return result('ready', '榕树之心已接取，迷雾消散处已到达；此挑战首次通行即可打，无需等后期。', forestSource, '读取当前槽位榕树之心任务及此点最近铃铛的激活记录。');
+    if (started(current)) return result('route', '榕树之心已接取。继续穿过迷雾森林，到迷雾消散处的人面榕树挑战。', forestSource);
   }
   if (map === 'fujizhilin' && point.kind === 'pillar') {
     const current = quest(slot, 'XueMaiJueXing');
     const inTrials = current?.QuestBranches?.some(b => b.BranchID === '1' && b.BranchType === 'EBranchType::BranchActivating');
     if ((inTrials || tag(slot, 'lz.龙柱.回忆起特殊杀气') === true) && nearbyReached) return result('ready', '血脉觉醒已开启试炼，附近铃铛已激活；难度高可以晚点打，不属于必须等后期解锁。', forestSource, '读取血脉觉醒试炼分支或特殊杀气回忆标记，并核对最近铃铛。');
+    return result('route', '沿镜林入口的洞道去龙柱，按血脉觉醒的试炼提示互动。', forestSource);
   }
   if (map === 'lujiacun' && nearbyReached && ['medicine:GuiShen', 'accessory:AC_SummonDuration', 'amber:4'].includes(key)) {
     return result('ready', point.id === 'AC_SummonDuration' ? '本地区首次通行即可完成这条支线，无需等后期；按下方步骤交付后领取。' : '附近区域已到达，攻略列为首次通行可取；没有已知后期剧情门槛。', luSource, '已核对具体走法与首次通行范围，且此点最近铃铛已激活。');

@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { decompress } from 'ooz-wasm';
-import { buildMapCatalog } from './map-data.mjs';
+import { buildMapCatalog, readBellNames } from './map-data.mjs';
 
 const PAK_KEY = Buffer.from('4BC8A51E5381325073F2BC7D4E3089CD557C4E9B7D453901C2C795518867E01D', 'hex');
 const LIMIT = 64 * 1024 * 1024;
@@ -233,6 +233,8 @@ export function buildQuestCatalog(gameDir) {
     return { id, name: loc.get(`Achievement_Name_${number}`) || id, description: loc.get(`Achievement_Des_${number}`) || '' };
   });
   const items = [], warnings = [];
+  try { Object.assign(bells, readBellNames(store, loc)); }
+  catch { warnings.push('铃铛名称表未识别，使用本地化名称。'); }
   for (const [category, file] of [
     ['goods', 'Item/DT_InventoryData'], ['weapon', 'UI/DT_WeaponData'],
     ['phantom', 'UI/DT_ShaqiWeaponData'], ['accessory', 'UI/DT_Accessory'], ['medicine', 'UI/DT_MedicineTable']
@@ -241,7 +243,7 @@ export function buildQuestCatalog(gameDir) {
     catch (error) { warnings.push(`${category} 物品名称未识别：${error.message}`); }
   }
   let maps = [];
-  try { maps = buildMapCatalog(store, loc, items); }
+  try { maps = buildMapCatalog(store, loc, items, bells); }
   catch (error) { warnings.push(`地图收集表未识别：${error.message}`); }
   return { quests, bells, achievements, items, maps, warnings };
 }

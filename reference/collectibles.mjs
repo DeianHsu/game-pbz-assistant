@@ -2,20 +2,26 @@ import { collectionState } from './collections.mjs';
 import { treasureGroups, sources } from './risk-data.mjs';
 import { treasureStages } from './stages.mjs';
 import { bookGuide } from './book-guides.mjs';
+import { routeAccess } from './collection-access.mjs';
+import { itemRecord, weaponFormBases } from './item-record.mjs';
+import { pipaRepair, soulComponentProducts, soulComponents, soulForms, soulGuides, soulRecipes, soulSources } from './soul-data.mjs';
 
 export const collectibleCategories = [
   ['weapon', '主武器'], ['phantom', '影之武装'], ['accessory', '饰品'], ['medicine', '药瓶'],
   ['book', '书籍与篇章'], ['petal', '记忆花瓣'], ['flower', '完整记忆之花'], ['treasure', '小张珍宝'],
-  ['soul', '铸魂材料'], ['key', '钥匙与机关'], ['quest', '剧情道具'], ['part', '饰品部件'], ['material', '升级材料'],
+  ['soul', '铸魂材料'], ['soul-part', '铸魂合成部件'], ['key', '钥匙与机关'], ['quest', '剧情道具'], ['part', '饰品部件'], ['material', '升级材料'],
   ['bell', '铃铛'], ['challenge', '挑战地点'], ['amber', '琥珀碎片点'], ['blackstone', '黑石碎片点']
 ].map(([id, name]) => ({ id, name }));
 const lower = s => String(s || '').toLowerCase();
-const aliases = { WoodenSword: ['WoodenSwordHun'], Tang: ['Tang_HorseCartCombat', 'TangPrologue', 'HeiMoShangPrologue'] };
-const variants = new Set(Object.values(aliases).flat());
-const placeholders = new Set(['I_060001', 'I_000006', 'Bell_Item_PlaceHolder', 'BaWangLianQiu', 'MoShou']);
+export const collectionAliases = { WoodenSword: ['WoodenSwordHun'], Tang: ['Tang_HorseCartCombat', 'TangPrologue', 'HeiMoShangPrologue'] };
+for (const [form, base] of Object.entries(weaponFormBases)) (collectionAliases[base] ||= []).push(form);
+export const unlistedCollectionItems = [...Object.values(collectionAliases).flat(), 'I_060001', 'I_000006', 'Bell_Item_PlaceHolder',
+  'ZhuGuangBaoQi', 'MoQie', 'BaWangLianQiu', 'MoShou', 'XueSeLingDang'];
+const ignored = new Set(unlistedCollectionItems);
+const recipeMaterials = new Set(Object.values(soulRecipes));
 const collectionKey = (category, id) => `${category}:${lower(id)}`;
 const goodsCategory = id => /^R_|^Page_/.test(id) ? 'book' : /^FS?_/.test(id) ? 'petal' : /^FA_/.test(id) ? 'flower'
-  : /^T_/.test(id) ? 'treasure' : /^TU_/.test(id) ? 'soul' : /^K_/.test(id) ? 'key' : /^I_/.test(id) ? 'quest'
+  : /^T_/.test(id) ? 'treasure' : recipeMaterials.has(id) ? 'soul' : soulComponentProducts[id] ? 'soul-part' : /^K_/.test(id) ? 'key' : /^I_/.test(id) ? 'quest'
   : /^AC_/.test(id) ? 'part' : /^(Weapon_Material|Ac_Material|Medi_Material)_/.test(id) ? 'material' : null;
 
 export function analyzeCollectibles(slot, catalog, collections, analysis) {
@@ -29,10 +35,10 @@ export function analyzeCollectibles(slot, catalog, collections, analysis) {
   }
   for (const item of catalog.items || []) {
     const key = collectionKey(item.category, item.id), origins = mapped.get(key) || [];
-    if (variants.has(item.id) || placeholders.has(item.id)) continue;
+    if (ignored.has(item.id)) continue;
     const category = item.category === 'goods' ? goodsCategory(item.id) : item.category;
     if (!category || !origins.length && !/[\u4e00-\u9fff]/.test(item.name)) continue;
-    const states = [item.id, ...(aliases[item.id] || [])].map(id => collectionState({ kind: item.category === 'goods' ? 'flower' : item.category, id }, slot));
+    const states = [item.id, ...(collectionAliases[item.id] || [])].map(id => collectionState({ kind: item.category === 'goods' ? 'flower' : item.category, id }, slot));
     const state = states.find(s => s.state === 'done') || states.find(s => s.state === 'unknown') || states[0];
     const chivalryPetal = origins.some(p => p.condition?.startsWith('BPF_BuMieXiaDan_Memory_'));
     const subtitle = chivalryPetal ? chivalryFlowerName : item.rowName !== item.name ? item.rowName : '';
@@ -49,10 +55,16 @@ export function analyzeCollectibles(slot, catalog, collections, analysis) {
       state: state.state, evidence: state.evidence, origins });
   }
   const allRules = analysis.gates.flatMap(g => g.items.filter(i => i.check === 'item').map(i => ({ ...i, gateName: g.name })));
+  const gearByMaterial = new Map([...rows.values()].filter(row => soulRecipes[lower(row.id)])
+    .map(row => [soulRecipes[lower(row.id)], row]));
   const order = { ready: 0, route: 1, unknown: 2, locked: 3, done: 4 };
   const items = [...rows.values()].map(row => {
     const treasure = row.category === 'treasure' && treasureGroups.find(g => g.ids.includes(row.id));
     const book = row.category === 'book' ? bookGuide(row.id) : null;
+    const soul = soulGuides[row.id];
+    const product = soulComponentProducts[row.id];
+    const gear = gearByMaterial.get(product || row.id);
+    const components = soulComponents[row.id]?.map(id => rows.get(collectionKey('goods', id))?.name || id);
     const handIn = treasure && slot.Narrative?.NarrativeSavedQuests?.find(q => q.QuestClass.includes('/MiaoShouKongKong.'));
     if (treasure && ['EQuestCompletion::QC_Started', 'EQuestCompletion::QC_Succeeded', 'EQuestCompletion::QC_Succeded'].includes(handIn?.QuestCompletion)
       && (handIn.CompletedBranches?.includes(treasure.branch) || handIn.QuestBranches?.some(b => b.BranchID === treasure.branch && b.BranchType === 'EBranchType::BranchCompleted')
@@ -64,7 +76,11 @@ export function analyzeCollectibles(slot, catalog, collections, analysis) {
       .sort((a, b) => Number(b.available) - Number(a.available))[0];
     let access = origin?.access || { state: 'unknown', label: '未收集', reason: '本周目存档确认尚未取得。当前资料未能确认它的具体获取地点或解锁条件。' };
     let guide = origin?.guide || { detail: 'nearby-bell', steps: [], source: null };
-    if (!origin && book) {
+    if (soul) {
+      guide = { ...soul, detail: 'specific' };
+      access = analysis.stage.rank >= soul.rank || collections.regions.some(r => r.id === soul.regionId && r.available)
+        ? routeAccess(soul, slot) : { state: 'locked', label: '暂不可取', reason: `先推进至${soul.regionName}。` };
+    } else if (!origin && book) {
       const requiredRank = book.minRank ?? book.rank;
       const open = requiredRank === undefined || analysis.stage.rank >= requiredRank;
       guide = { detail: book.steps?.length ? 'specific' : 'nearby-bell', bell: book.bell || '', steps: book.steps || [],
@@ -82,21 +98,35 @@ export function analyzeCollectibles(slot, catalog, collections, analysis) {
       access = { state: analysis.stage.rank >= treasureStages[treasure.branch] ? 'route' : 'locked', label: '地区珍宝', reason: `属于${treasure.name}的小张珍宝清单，交付后仍保留获取记录；具体宝箱通路未逐一判断。` };
       guide = { detail: 'specific', steps: [`在${treasure.name}寻找${row.name}，集齐本区清单后交给小张。`], source: sources.trophies.url };
     }
+    if (components?.length) guide = { ...guide, steps: [...guide.steps, `收齐${components.join('、')}后合成。`] };
+    if (gear && !guide.source) guide = { ...guide, source: soulSources[gear.category] };
     if (row.state === 'done') access = { state: 'done', label: '已收集', reason: row.evidence };
-    const regions = [...new Set([...row.origins.map(p => p.regionId), ...(book?.regionId ? [book.regionId] : [])])];
-    const regionNames = [...new Set([...row.origins.map(p => p.regionName), ...(book?.regionName ? [book.regionName] : [])])];
+    const regions = [...new Set([...row.origins.map(p => p.regionId), soul?.regionId, book?.regionId].filter(Boolean))];
+    const regionNames = [...new Set([...row.origins.map(p => p.regionName), soul?.regionName, book?.regionName].filter(Boolean))];
     return { ...row, origins: row.origins.map(p => ({ key: p.key, regionId: p.regionId, regionName: p.regionName,
       name: p.name, bell: p.guide?.bell || p.nearest[0]?.name || '', access: p.access.state })), access, guide,
-      regionIds: regions, regionNames,
+      regionIds: regions, regionNames, soulWeapon: gear?.name || '', soulProduct: product ? rows.get(collectionKey('goods', product))?.name || product : '',
       bell: guide.bell || origin?.guide?.bell || origin?.nearest[0]?.name || '',
       available: ['ready', 'route'].includes(access.state) || access.state === 'unknown' && (regions.some(id => collections.regions.find(r => r.id === id)?.available) || Boolean(book && analysis.stage.rank >= (book.minRank ?? book.rank))),
       steps: row.category === 'flower' && !guide.steps.length ? ['收集对应的记忆花瓣并合成完整记忆之花；花瓣和完整花分开统计。'] : guide.steps };
   });
+  const itemByKey = new Map(items.map(row => [row.key, row]));
+  for (const row of items) {
+    const id = lower(row.id), recipe = soulRecipes[id], pipa = id === 'cuixinpipa';
+    if (!recipe && !pipa) continue;
+    const inventory = (row.category === 'weapon' ? slot.Inventory?.MainWeaponInfos : slot.Inventory?.ShaChiWeaponInfo) || {};
+    const value = itemRecord(inventory, row.category, row.id)?.AlreadySnapSoul;
+    const transformed = Object.entries(weaponFormBases).some(([form, base]) => base === row.id && itemRecord(inventory, 'weapon', form));
+    const material = recipe && itemByKey.get(collectionKey('goods', recipe));
+    row.temper = { state: transformed || value === true || Number.isInteger(value) && value > 0 ? 'done' : value === false || value === 0 ? 'pending' : 'unknown',
+      material: material?.name || recipe || '', form: soulForms[id] || '', regionIds: material?.regionIds || [], regionNames: material?.regionNames || [], bell: material?.bell || '',
+      steps: pipa ? pipaRepair.steps : material?.steps || [], source: pipa ? pipaRepair.source : material?.guide.source || soulSources[row.category] };
+  }
   const categories = collectibleCategories.map(category => {
     const list = items.filter(i => i.category === category.id);
     return { ...category, total: list.length, done: list.filter(i => i.state === 'done').length, unknown: list.filter(i => i.state === 'unknown').length };
   }).filter(c => c.total);
   return { items, categories, total: items.length, done: items.filter(i => i.state === 'done').length,
     accessCounts: Object.fromEntries(['ready', 'route', 'locked', 'unknown'].map(state => [state, items.filter(i => i.state !== 'done' && i.access.state === state).length])),
-    scope: '物品按类型及标识去重，铃铛、挑战和碎片箱按点位统计。按本周目获取记录核对，消耗或交付后仍算取得。书籍目录分组、已知占位项和剧情专用武器变体不另算收集品；目录不代表每项都已确认可获取。' };
+    scope: '物品按类型及标识去重，铃铛、挑战和碎片箱按点位统计。装备按基础形态计数，铸魂和合成部件分别显示。按本周目获取记录核对，消耗或交付后仍算取得。' };
 }

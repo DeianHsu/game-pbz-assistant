@@ -36,6 +36,18 @@ test('消费材料后的计数保留，达到阈值不等于已记录解锁', ()
   const r = analyzeAchievements(saved({ Counters: { ACH_043: 10 } }), s, catalog).rows.find(a => a.id === 'ACH_043');
   assert.equal(r.progress.value, 10); assert.equal(r.state, 'active');
 });
+test('炽刃的行前检查和黑魔伤的成就前置识别已铸魂的原武器记录', () => {
+  const s = slot();
+  s.Inventory.MainWeaponInfos = { Long: { WeaponLevel: 10, AlreadySnapSoul: 1 }, Tang: { WeaponLevel: 30, AlreadySnapSoul: 1 } };
+  const weaponCatalog = { ...catalog, items: [...catalog.items,
+    { id: 'XieHuo', name: '炽刃', category: 'weapon' }, { id: 'HeiMoShang', name: '黑魔伤', category: 'weapon' }
+  ] };
+  const blade = analyzeSlot(s, weaponCatalog).gates.find(g => g.id === 'sanmian').items.find(i => i.item === 'XieHuo');
+  assert.equal(blade.satisfied, true);
+  const dark = analyzeAchievements(saved(), s, weaponCatalog).rows.find(a => a.id === 'ACH_054');
+  assert.equal(dark.equipment.owned, true);
+  assert.equal(dark.equipment.record.WeaponLevel, 30);
+});
 test('交掉珍宝后数量归零，累计获取记录仍能证明已拾取', () => {
   const s = slot(); s.Inventory.InventoryInfos.T_12002 = { CurrentAmount: 0, MaxAmount: 1 };
   assert.equal(ownedItem(s, 'goods', 'T_12002').owned, true);

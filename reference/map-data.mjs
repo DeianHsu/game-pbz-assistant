@@ -129,13 +129,28 @@ export function readMapLabels(store, loc) {
   return labels;
 }
 
-export function buildMapCatalog(store, loc, items) {
+export function readBellNames(store, loc) {
+  const bytes = store.readFile('ProjectPBZ/Content/PBZContent/DataTable/UI/DT_BellData.uasset'), names = assetNames(bytes);
+  const marker = Buffer.from('0800000044656661756c7400', 'hex'), bells = {};
+  // The text key in the bell table may differ from the ID saved by the game.
+  for (let p = bytes.indexOf(marker, bytes.readUInt32LE(4)); p >= 0; p = bytes.indexOf(marker, p + 1)) {
+    if (p < 10 || bytes.readUInt16LE(p - 2) !== 0x0700) continue;
+    try {
+      const id = new MapReader(bytes, names, p - 10).name(), key = new MapReader(bytes, names, p + marker.length).string();
+      if (id.startsWith('Bell_') && loc.has(key)) bells[id] = loc.get(key);
+    } catch { /* Other text fields do not have a bell ID at this offset. */ }
+  }
+  return bells;
+}
+
+export function buildMapCatalog(store, loc, items, bells = {}) {
   const maps = readNativeMaps(store), groups = readMapGroups(store), labels = readMapLabels(store, loc);
-  return groups.map(group => {
+  // The old XueSeSenLin group references an absent world and predates the split into release maps.
+  return groups.filter(group => group.id.toLowerCase() !== 'xuesesenlin').map(group => {
     const members = group.members.map(s => s.toLowerCase());
     const points = maps.filter(m => members.includes(m.id.toLowerCase())).flatMap(m => m.points)
       .filter(p => !['primary', 'key'].includes(p.kind))
-      .map(p => ({ ...p, name: p.kind === 'bell' ? loc.get(p.id) || ({ Bell_FJZL_GP_002: '镜林龙柱' }[p.id]) || p.id : (() => { const item = items.find(i => i.id.toLowerCase() === p.id?.toLowerCase()); return p.kind === 'flower' && /[\u4e00-\u9fff]/.test(item?.rowName || '') ? item.rowName : item?.name || p.id || ''; })(),
+      .map(p => ({ ...p, name: p.kind === 'bell' ? bells[p.id] || loc.get(p.id) || ({ Bell_FJZL_GP_002: '镜林龙柱' }[p.id]) || p.id : (() => { const item = items.find(i => i.id.toLowerCase() === p.id?.toLowerCase()); return p.kind === 'flower' && /[\u4e00-\u9fff]/.test(item?.rowName || '') ? item.rowName : item?.name || p.id || ''; })(),
         category: ['weapon', 'phantom'].includes(p.kind) ? 'weapon' : ['accessory', 'medicine'].includes(p.kind) ? 'accessory' : ['banyan', 'pillar', 'scarecrow'].includes(p.kind) ? 'challenge' : p.kind }));
     return { id: group.id, name: labels[group.id.toLowerCase()]?.name || `未命名地区（${group.id}）`, members: group.members, points };
   }).filter(m => m.points.length > 0);

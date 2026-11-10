@@ -2,6 +2,7 @@ import { collectionGuides } from './collection-guides.mjs';
 import { additionalCheckpoints } from './risk-data.mjs';
 import { collectionAccess } from './collection-access.mjs';
 import { pointAccessRoute } from './collection-access-data.mjs';
+import { itemRecord } from './item-record.mjs';
 
 export const collectionCategories = [
   ['bell', '铃铛'], ['weapon', '武器及影之武装'], ['accessory', '饰品及药瓶'], ['challenge', '挑战地点'],
@@ -22,7 +23,7 @@ export function collectionState(point, slot) {
   if (fields[point.kind]) {
     const table = slot.Inventory?.[fields[point.kind]], cycle = slot.PBZGameSystem?.CycleCount;
     if (!isRecord(table) || !Number.isInteger(cycle)) return { state: 'unknown', evidence: '缺少可识别的背包或周目记录。' };
-    const id = Object.keys(table).find(id => lower(id) === lower(point.id)), record = table[id];
+    const record = itemRecord(table, point.kind, point.id);
     if (!record) return { state: 'missing', evidence: '当前槽位没有该物品的获取记录。' };
     if (!Number.isInteger(record.AcquiredCycle)) return { state: 'unknown', evidence: '物品记录未保存可识别的获取周目。' };
     return { state: record.AcquiredCycle === cycle ? 'done' : 'missing',

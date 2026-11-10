@@ -1,11 +1,12 @@
 import { questAchievements, trueEndingQuests, treasureGroups, sources } from './risk-data.mjs';
+import { itemRecord } from './item-record.mjs';
 
 const achieved = q => ['EQuestCompletion::QC_Succeded', 'EQuestCompletion::QC_Succeeded'].includes(q?.QuestCompletion);
 const fields = { weapon: 'MainWeaponInfos', phantom: 'ShaChiWeaponInfo', accessory: 'AccessoryInfos', goods: 'InventoryInfos' };
 export function ownedItem(slot, category, id) {
   const table = slot.Inventory?.[fields[category]];
   if (!table || typeof table !== 'object') return { known: false, owned: false };
-  const key = Object.keys(table).find(key => key.toLowerCase() === id.toLowerCase()), record = table[key];
+  const record = itemRecord(table, category, id);
   if (!record) return { known: true, owned: false };
   // MaxAmount records previous acquisition even after handing a treasure in.
   const owned = category !== 'goods' || Number(record.CurrentAmount) > 0 || Number(record.MaxAmount) > 0;

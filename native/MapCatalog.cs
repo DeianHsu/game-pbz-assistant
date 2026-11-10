@@ -142,6 +142,26 @@ namespace PBZ.Native
             }
             return labels;
         }
+        public static Dictionary<string, string> BellNames(IoArchive archive, Catalog catalog)
+        {
+            byte[] bytes = archive.ReadFile(Root + "DataTable/UI/DT_BellData.uasset");
+            string[] names = Catalog.Names(bytes);
+            byte[] marker = Catalog.TextMarker;
+            var bells = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int p = GameBytes.Find(bytes, marker, Catalog.Offset(bytes, 4)); p >= 0; p = GameBytes.Find(bytes, marker, p + 1))
+            {
+                if (p < 10 || BitConverter.ToUInt16(bytes, p - 2) != 0x0700) continue;
+                try
+                {
+                    string id = new MapReader(bytes, names, p - 10).Name();
+                    string text = catalog.Local(new GameBytes(bytes, p + marker.Length).String());
+                    if (id.StartsWith("Bell_", StringComparison.Ordinal) && text != "") bells[id] = text;
+                }
+                catch (InvalidDataException) { /* Other text fields do not have a bell ID at this offset. */ }
+                catch (ArgumentException) { }
+            }
+            return bells;
+        }
         public static Row[] Read(IoArchive archive, Catalog catalog)
         {
             Row[] points = ReadPoints(archive);
@@ -150,7 +170,7 @@ namespace PBZ.Native
             {
                 string kind = point.S("kind"), id = point.S("id");
                 Row item = catalog.Items.FirstOrDefault(i => i.S("id").Equals(id, StringComparison.OrdinalIgnoreCase));
-                point["name"] = kind == "bell" ? catalog.Local(id).Or(id == "Bell_FJZL_GP_002" ? "镜林龙柱" : id)
+                point["name"] = kind == "bell" ? catalog.BellName(id).Or(id == "Bell_FJZL_GP_002" ? "镜林龙柱" : id)
                     : kind == "flower" && Regex.IsMatch(item.S("rowName"), @"[\u4e00-\u9fff]") ? item.S("rowName") : item.S("name").Or(id);
                 point["category"] = kind == "phantom" ? "weapon" : kind == "medicine" ? "accessory"
                     : kind == "banyan" || kind == "pillar" || kind == "scarecrow" ? "challenge" : kind;
@@ -165,7 +185,8 @@ namespace PBZ.Native
                 string[] children = Enumerable.Range(0, group.Reader.Count(100)).Select(j => group.Name()).ToArray();
                 if (children.Length == 0) children = new[] { id };
                 var list = points.Where(p => children.Contains(p.S("rawMap"), StringComparer.OrdinalIgnoreCase)).ToArray();
-                if (id.Equals("test", StringComparison.OrdinalIgnoreCase) || list.Length == 0) continue;
+                // XueSeSenLin refers to an absent world. Its relocated rewards have separate release points.
+                if (id.Equals("test", StringComparison.OrdinalIgnoreCase) || id.Equals("XueSeSenLin", StringComparison.OrdinalIgnoreCase) || list.Length == 0) continue;
                 string label;
                 if (!labels.TryGetValue(id, out label)) label = "未命名地区（" + id + "）";
                 result.Add(Data.Make("id", id, "name", label, "members", children, "points", list));

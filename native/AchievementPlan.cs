@@ -56,6 +56,11 @@ namespace PBZ.Native
             bool owned = equipment.Flag("owned");
             bool tasksDone = quests.Length > 0 && quests.All(q => p.State(q) == "done");
             string map = plan.S("map"), requirement = "";
+            var objectives = p.ReadObjectives(Progress.Guides.Get("achievementObjectives").Rows(id)).ToList();
+            if (equipment != null)
+                objectives.Insert(0, Progress.Objective(equipment.S("name"), equipment.Flag("known") ? (bool?)owned : null));
+            if (id == "ACH_039")
+                objectives.AddRange(navigation.Quests.FirstOrDefault(q => q.S("id") == "MiaoShouKongKong").Rows("objectives"));
 
             if (plan == null) checks.Add(Check(null, "当前版本还没有此项的前置规则。"));
             // Inherited equipment is usable now; acquisition-area gates no longer apply.
@@ -174,7 +179,7 @@ namespace PBZ.Native
             return achievement.With("availability", availability,
                 "availabilityLabel", unlocked ? "已解锁" : availability == "locked" ? "暂不可取" : "前置已满足",
                 "availabilityReason", reason, "currentRequirement", requirement.Or(achievement.S("description")),
-                "steps", plan.Strings("steps"), "notes", notes.Distinct().ToArray(), "risks", risks,
+                "steps", plan.Strings("steps"), "notes", notes.Distinct().ToArray(), "risks", risks, "objectives", objectives.ToArray(),
                 "warning", !unlocked && (quests.Any(q => p.State(q) == "failed") || plan.Flag("ribbons") && !owned && p.StageInfo.Flag("afterMu") ||
                     risks.Any(r => r.Flag("available") && !r.Flag("optional"))),
                 "planSource", plan.S("source").Or("https://www.gamersky.com/handbook/202610/2237267" +

@@ -66,6 +66,20 @@ test('山庄之后回访使用主线证据，不因返回森林撤销阶段', ()
   assert.equal(result.gates.find(g => g.id === 'mirage').passed, true);
   assert.equal(result.gates.find(g => g.id === 'snow').available, true);
 });
+test('完成隔绝楔子和拳心后，进行中的三面混沌仍是回访待办', () => {
+  const s = slot('MainCh3-LongYuZuo', 'PBZ_Fujizhilin_WP');
+  s.EventPipeline.GlobalTags.push('fjzl.风雪数据层.激活');
+  const done = { QuestCompletion: 'EQuestCompletion::QC_Succeded' };
+  s.Narrative.NarrativeSavedQuests.push(quest('GeJueXieZi', done), quest('QuanXin', done), quest('SanMianHunDun'));
+
+  const result = analyzeSlot(s, catalog);
+  const revisit = result.gates.find(g => g.id === 'snow');
+  const puppets = revisit.items.find(i => i.quest === 'SanMianHunDun');
+  assert.equal(revisit.passed, false);
+  assert.equal(puppets.available, true);
+  assert.equal(puppets.stateLabel, '进行中');
+  assert.equal(puppets.failure, null);
+});
 test('旧周目地图迷雾记录不能开放新周目的后期阶段', () => {
   const s = slot('MainCh1-LinZhongShaJi', 'PBZ_Fujizhilin_WP'); s.PBZGameSystem.CycleCount = 1;
   s.MapSubsystem = { UnLockMaskInfos: { XiMeng: { 0: ['old-fog'] } } };
@@ -78,10 +92,33 @@ test('当前检查都完成时不自动推荐未来节点', () => {
   assert.equal(result.coverage.currentPending, 0);
   assert.equal(result.recommendedGate, null);
 });
-test('力者入战不等于战后领奖，胜利事件后才开放奖励', () => {
-  const s = slot('MainCh3-LongYuZuo', 'PBZ_DuanHunShan_WP');
-  s.EventPipeline.GlobalTags.push('dhy.Seq113.力者入战');
+test('小翠在追逐后仍须先交付，开战前警告，跳过交付则记录中断', () => {
+  const s = slot('MainCh3-LongYuZuo', 'PBZ_DuanHun_WP');
+  const cui = quest('XiaoCui', { CompletedBranches: ['1', '2', '3', '4-A'] });
+  s.Narrative.NarrativeSavedQuests.push(cui);
+  const read = () => analyzeSlot(s, catalog);
+  const gate = id => read().gates.find(g => g.id === id);
+  const tags = s.EventPipeline.GlobalTags;
+  tags.push('ddsd.力者.结束', 'dhy.力者追逐1.播放完成');
+  const before = gate('crusher');
+  assert.equal(before.passed, false);
+  assert.equal(before.currentPending, 1);
+  assert.match(before.items[0].alert, /再打力者和锯者/);
+  assert.equal(before.items[0].bell, '最后的正道营地');
+  assert.equal(read().questFailures.length, 0);
+
+  tags.push('dhy.Seq113.力者入战');
+  assert.equal(gate('crusher').passed, true);
+  assert.equal(read().questFailures.find(q => q.id === 'XiaoCui').state, 'interrupted');
   assert.equal(isGateAvailable('crusher-reward', detectStage(s)), false);
-  s.EventPipeline.GlobalTags.push('achievment.锯理力争.完成');
-  assert.equal(isGateAvailable('crusher-reward', detectStage(s)), true);
+  tags.push('dhy.力者战斗.2阶段击杀');
+  assert.equal(gate('crusher-reward').items[0].available, false);
+
+  tags.push('xsd.陆解元.可干力者');
+  assert.equal(read().questFailures.length, 0);
+  assert.equal(gate('crusher').items[0].satisfied, true);
+  assert.equal(gate('crusher-reward').items[0].available, true);
+  tags.pop();
+  cui.CompletedBranches.push('5');
+  assert.equal(gate('crusher').items[0].satisfied, true);
 });

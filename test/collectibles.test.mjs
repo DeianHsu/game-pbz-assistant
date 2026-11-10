@@ -41,6 +41,31 @@ test('剧情专用黑伤变体归入同一武器，有实际变体记录仍确�
   const result = analyze(s, [item('Tang', 'weapon'), item('TangPrologue', 'weapon')]);
   assert.equal(result.total, 1); assert.equal(result.done, 1);
 });
+test('正式装备按基础形态统计，专属铸魂材料、部件和残留条目分开', () => {
+  const s = save();
+  s.Inventory.MainWeaponInfos.HeiMoShang = { AcquiredCycle: 1 };
+  s.Inventory.ShaChiWeaponInfo.CuiXinPiPa = { AcquiredCycle: 1, AlreadySnapSoul: true };
+  const result = analyze(s, [item('Tang', 'weapon'), item('HeiMoShang', 'weapon'), item('ZhuGuangBaoQi', 'weapon'),
+    item('CuiXinPiPa', 'phantom'), item('XueSeLingDang', 'phantom'), item('TU_15001'), item('TU_150011'), item('TU_13005')]);
+  assert.deepEqual(result.items.map(i => [i.id, i.category]), [['Tang', 'weapon'], ['CuiXinPiPa', 'phantom'], ['TU_15001', 'soul'], ['TU_150011', 'soul-part']]);
+  assert.equal(result.items[0].state, 'done');
+  assert.equal(result.items[0].temper.state, 'done');
+  assert.equal(result.items[1].temper.form, '幻术琵琶');
+  assert.equal(result.items[1].temper.material, '');
+});
+test('待铸魂识别当前持有的装备并关联材料路线，收集仍按周目核对', () => {
+  const s = save(), a = analysis(); a.stage.rank = 9;
+  s.Inventory.ShaChiWeaponInfo.XueDiZi = { AcquiredCycle: 0, AlreadySnapSoul: false };
+  s.Inventory.ShaChiWeaponInfo.HuoLiuXing = { AcquiredCycle: 1, AlreadySnapSoul: true };
+  const result = analyze(s, [item('XueDiZi', 'phantom', '血滴子'), item('HuoLiuXing', 'phantom'), item('TU_08002', 'goods', '强化电锯'), item('TU_11012')], [], a);
+  const [pending] = result.items.filter(i => i.temper?.state === 'pending');
+  assert.equal(pending.state, 'missing');
+  assert.equal(pending.temper.material, '强化电锯');
+  assert.equal(pending.temper.bell, '大营瀑布后方');
+  assert.match(pending.temper.steps[1], /神像左下/);
+  assert.equal(result.items.find(i => i.id === 'TU_08002').access.state, 'ready');
+  assert.equal(result.items.find(i => i.id === 'TU_11012').bell, '梅谷村西岛船坞');
+});
 test('非地图奖励沿用阶段和获取步骤，不因列入全目录提前开放', () => {
   const a = analysis(); a.gates.push({ name: '后期奖励', items: [{ check: 'item', item: 'TU_02002', category: 'goods', available: false, action: '战后领取材料。', source: 'https://example.com' }] });
   let row = analyze(save(), [item('TU_02002')], [], a).items[0];

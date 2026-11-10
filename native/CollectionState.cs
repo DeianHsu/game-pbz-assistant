@@ -7,10 +7,7 @@ namespace PBZ.Native
     // 地图点位只依据对应存档证据判断，不将字段缺失视为未收集。
     internal static class CollectionState
     {
-        static readonly Dictionary<string, string> Fields = new Dictionary<string, string> {
-            { "weapon", "MainWeaponInfos" }, { "phantom", "ShaChiWeaponInfo" }, { "accessory", "AccessoryInfos" },
-            { "medicine", "MedicineInfos" }, { "flower", "InventoryInfos" }
-        };
+        static readonly HashSet<string> InventoryKinds = new HashSet<string> { "weapon", "phantom", "accessory", "medicine", "flower" };
         static object Get(object value, string key)
         {
             var map = value as IDictionary<string, object>;
@@ -21,11 +18,11 @@ namespace PBZ.Native
         static object[] Array(object value) { return value as object[]; }
         static IDictionary<string, object> Map(object value) { return value as IDictionary<string, object>; }
         static bool Same(object a, object b) { return string.Equals(Text(a), Text(b), StringComparison.OrdinalIgnoreCase); }
-        static bool Integer(object value) { return value is int || value is long; }
 
-        public static string Detect(object point, object slot)
+        public static string Detect(object point, Progress progress)
         {
             string kind = Text(Get(point, "kind")), id = Text(Get(point, "id"));
+            object slot = progress.Slot;
             if (kind == "bell")
             {
                 object manager = Get(slot, "BellManager");
@@ -33,17 +30,10 @@ namespace PBZ.Native
                 if (arrays.Any(a => a != null && a.Any(value => Same(value, id)))) return "done";
                 return arrays.All(a => a != null) ? "missing" : "unknown";
             }
-            string field;
-            if (Fields.TryGetValue(kind, out field))
+            if (InventoryKinds.Contains(kind))
             {
-                IDictionary<string, object> table = Map(Get(Get(slot, "Inventory"), field));
-                object cycle = Get(Get(slot, "PBZGameSystem"), "CycleCount");
-                if (table == null || !Integer(cycle)) return "unknown";
-                var entry = table.FirstOrDefault(pair => Same(pair.Key, id));
-                if (entry.Key == null || entry.Value == null) return "missing";
-                object acquired = Get(entry.Value, "AcquiredCycle");
-                if (!Integer(acquired)) return "unknown";
-                return Convert.ToInt64(acquired) == Convert.ToInt64(cycle) ? "done" : "missing";
+                bool? acquired = progress.Acquired(id, kind == "flower" ? "goods" : kind);
+                return acquired == true ? "done" : acquired == false ? "missing" : "unknown";
             }
             object nodes = Get(Get(slot, "EventPipeline"), "ExecuteNodeGuid");
             object[] ids = Array(Get(point, "nodes"));

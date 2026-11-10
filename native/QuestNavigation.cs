@@ -151,42 +151,47 @@ namespace PBZ.Native
                 return offer.Strings("needs").Length == 0 || access.Route(offer).S("state") == "ready";
             });
         }
-        Row ResolveOffer(Row offer)
+        Row ResolveOffer(Row offer, bool closed = false)
         {
             var map = Maps.Get(offer.S("map")).List();
             string area = map[0].Str(), group = map[2].Str();
             return Data.Make("mapId", group, "mapName", Maps.Get(group).List().FirstOrDefault().Str().Or(area), "area", area,
-                "person", offer.S("person"), "place", offer.S("place"), "bell", p.Catalog.Local(offer.S("bellId")), "next", offer.S("action"),
-                "warning", offer.S("warning"), "source", offer.S("source"),
-                "access", CollectionAccess.Result("ready", "已核对接取点附近的到达记录及已知前置。").With("label", "可接取"));
+                "person", offer.S("person"), "place", offer.S("place"), "bell", p.Catalog.BellName(offer.S("bellId")), "next", closed ? "" : offer.S("action"),
+                "warning", closed ? "" : offer.S("warning"), "source", offer.S("source"),
+                "access", closed ? CollectionAccess.Result("locked", offer.S("closedReason")).With("label", "接取已关闭")
+                    : CollectionAccess.Result("ready", "已核对接取点附近的到达记录及已知前置。").With("label", "可接取"));
         }
         Row Build(Row quest)
         {
+            if (quest.S("catalogNote") != "") return quest.With("targets", new Row[0], "riskLevel", "none");
             string state = quest.S("state"), id = quest.S("id");
-            var failure = quest.Get("failure");
-            Row[] active = quest.Rows("branches").Where(b => b.Flag("active")).ToArray();
-            Row defs = quest.Get("definitions").Dict();
-            // JavaScript's Object.keys puts array-index keys before other keys.
-            string first = id == "MoJiaoZhiNv" ? "S1" : defs.Keys.OrderBy(key =>
+            Row[] objectives = id == "MiaoShouKongKong" ? p.Treasures.SelectMany(group =>
             {
-                uint number;
-                return uint.TryParse(key, out number) && number.ToString() == key ? number : uint.MaxValue;
-            }).FirstOrDefault() ?? "";
-            Row[] branches = state == "done" ? new Row[0] : active.Length > 0 ? active : first != "" ? new[] { defs.Get(first).Dict().With("id", first) } : new Row[0];
+                string map = TreasureMaps.Strings(group.S("branch").Split('-')[0])[0];
+                string area = Maps.Get(map).List()[0].Str();
+                return group.Rows("items").Select(item => Progress.Objective(item.S("name"), item.Flag("known") ? (bool?)item.Flag("owned") : null, area));
+            }).ToArray() : p.ReadObjectives(Guides.Get("questObjectives").Rows(id));
+            var failure = quest.Get("failure");
+            bool recorded = quest.Flag("recorded"), settled = id == "MiaoShouKongKong" && state == "active" && p.Treasures.All(group => group.Flag("handedIn"));
+            Row[] active = quest.Rows("branches").Where(b => b.Flag("active")).ToArray();
+            Row[] branches = state == "done" || settled ? new Row[0] : active;
             bool snowChain = id == "BaiXue" || id == "YongShengDaoZhu";
             var step = p.BaiXueStep;
             bool snowTarget = snowChain && step.S("quest") == id && step.S("map") != "" && failure == null;
             bool snowStart = state == "missing" && (step.S("id") == "start" || step.S("id") == "puppet");
             Row offer = FindOffer(quest);
+            Row closed = !recorded && state == "missing" ? Offers.Rows(id).FirstOrDefault(o => o.S("closedReason") != "" && o.Strings("cutoffs").Any(p.Tags.Contains)) : null;
             var targets = new List<Row>();
             if (offer != null)
                 targets.Add(ResolveOffer(offer));
+            else if (closed != null)
+                targets.Add(ResolveOffer(closed, true));
             else if (snowTarget)
                 targets.Add(Resolve(step.With("next", step.S("action")), Data.Make("id", step.S("branch"), "objective", step.S("title"))));
             else if (!snowChain || failure != null)
                 targets.AddRange(branches.SelectMany(branch => ForBranch(quest, branch).Select(t => Resolve(t, branch))));
-            if (targets.Count == 0 && (!snowChain || failure != null) && state != "done" && id != "JiaoTuSanKu" && id != "MiaoShouKongKong")
-                targets.Add(Resolve(Target("", "尚无可定位的活动步骤"), branches.FirstOrDefault()));
+            if (targets.Count == 0 && (!snowChain || failure != null) && (recorded || failure != null) && state != "done" && id != "JiaoTuSanKu" && id != "MiaoShouKongKong")
+                targets.Add(Resolve(Target("", "任务日志未给出可定位的步骤"), branches.FirstOrDefault()));
             foreach (Row target in targets)
             {
                 if (failure != null) target["access"] = CollectionAccess.Result("locked", failure.S("reason")).With("label", "任务" + quest.S("stateLabel"));
@@ -196,12 +201,14 @@ namespace PBZ.Native
                 .SelectMany(g => g.Rows("items").Where(i => !i.Flag("satisfied") && (i.S("quest") == id ||
                     id == "MiaoShouKongKong" && g.S("id") == "opera" && active.Any(b => b.S("id") == "6" || b.S("id") == "6-1")))
                     .Select(i => i.With("gateName", g.S("name"), "gateId", g.S("id"),
-                        "level", g.Flag("passed") ? "urgent" : i.Flag("available") ? "warning" : "future"))).ToArray();
+                        "level", g.Flag("passed") || i.Flag("available") && i.S("alert") != "" ? "urgent" : i.Flag("available") ? "warning" : "future"))).ToArray();
             string label = quest.S("stateLabel");
             if (offer != null) label = "未接取";
+            else if (closed != null) label = "接取已关闭";
+            else if (settled) label = "五区已交付";
             else if (snowTarget && state == "missing" && !snowStart) label = "路线可继续";
-            return quest.With("targets", targets.ToArray(), "risks", risks, "canAccept", offer != null,
-                "predicted", offer == null && active.Length == 0 && state != "done",
+            return quest.With("targets", targets.ToArray(), "objectives", objectives, "risks", risks, "canAccept", offer != null,
+                "settled", settled,
                 "actionable", snowTarget && !snowStart && p.Gates.Any(g => g.S("id") == "mountain" && g.Flag("available")), "stateLabel", label,
                 "riskLevel", failure != null || risks.Any(r => r.S("level") == "urgent") ? "urgent"
                     : offer.S("warning") != "" || risks.Any(r => r.S("level") == "warning") ? "warning" : risks.Length > 0 ? "future" : "none");

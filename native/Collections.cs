@@ -14,9 +14,10 @@ namespace PBZ.Native
         static readonly Row Ranks = Data.Make("xigu", 1, "fujizhilin", 2, "lujiacun", 3, "zhengdaodaying", 3, "pangzhen", 4,
             "houjie", 4, "meiguhu", 5, "meigu_yiji", 5, "dengdingshandao", 6, "ximeng", 7, "duanhunshan", 8, "duanhunya", 8);
         static readonly Row PointNames = Data.Make("amber", "杀气琥珀碎片", "blackstone", "黑石碎片", "banyan", "榕树挑战", "pillar", "龙柱挑战", "scarecrow", "稻草人挑战");
-        static readonly Row Aliases = Data.Make("WoodenSword", new[] { "WoodenSwordHun" }, "Tang", new[] { "Tang_HorseCartCombat", "TangPrologue", "HeiMoShangPrologue" });
-        static readonly HashSet<string> Ignored = new HashSet<string>(Aliases.Values.SelectMany(v => v.List().OfType<string>())
-            .Concat(new[] { "I_060001", "I_000006", "Bell_Item_PlaceHolder", "BaWangLianQiu", "MoShou" }));
+        static readonly Row Aliases = Guides.Get("collectionAliases").Dict();
+        static readonly HashSet<string> Ignored = new HashSet<string>(Guides.Strings("unlistedCollectionItems"));
+        static readonly Row Recipes = Guides.Get("soulRecipes").Dict(), ComponentProducts = Guides.Get("soulComponentProducts").Dict();
+        static readonly HashSet<string> RecipeMaterials = new HashSet<string>(Recipes.Values.OfType<string>());
         static readonly string[] Deduplicate = { "bell", "weapon", "phantom", "accessory", "medicine" };
         static readonly string[] LocationKinds = { "bell", "banyan", "pillar", "scarecrow", "amber", "blackstone" };
         static readonly Row AccessOrder = Data.Make("ready", 0, "route", 1, "unknown", 2, "locked", 3, "done", 4);
@@ -84,7 +85,7 @@ namespace PBZ.Native
             var points = region.Rows("points").Where(pt => !Deduplicate.Contains(pt.S("kind")) || seen.Add(pt.S("kind") + ":" + pt.S("id")))
                 .Select(point =>
                 {
-                    string state = CollectionState.Detect(point, p.Slot), kind = point.S("kind"), name = point.S("name");
+                    string state = CollectionState.Detect(point, p), kind = point.S("kind"), name = point.S("name");
                     if (point.S("condition").StartsWith("BPF_BuMieXiaDan_Memory_", StringComparison.Ordinal))
                         name = p.Catalog.Item("goods", point.S("id")).S("name").Or(name);
                     int[] position = point.Get("position") as int[];
@@ -94,7 +95,7 @@ namespace PBZ.Native
                             int[] target = (int[])b["position"];
                             double meters = Math.Sqrt(DistanceSquared(target, position)) / 100;
                             return Data.Make("id", b.S("id"), "name", b.S("name"), "distance", (int)Math.Floor(meters + 0.5),
-                                "activated", CollectionState.Detect(b, p.Slot) == "done");
+                                "activated", CollectionState.Detect(b, p) == "done");
                         }).OrderBy(b => b.N("distance")).Take(3).ToArray();
                     var pt = point.With("state", state, "name", name.Or(PointNames.S(kind)).Or("未识别收集点"), "nearest", nearest,
                         "guide", Acquisition(point), "regionId", region.S("id"), "regionName", region.S("name"));
@@ -116,7 +117,8 @@ namespace PBZ.Native
             if (Regex.IsMatch(id, "^FS?_")) return "petal";
             if (id.StartsWith("FA_")) return "flower";
             if (id.StartsWith("T_")) return "treasure";
-            if (id.StartsWith("TU_")) return "soul";
+            if (RecipeMaterials.Contains(id)) return "soul";
+            if (ComponentProducts.ContainsKey(id)) return "soul-part";
             if (id.StartsWith("K_")) return "key";
             if (id.StartsWith("I_")) return "quest";
             if (id.StartsWith("AC_")) return "part";
@@ -139,7 +141,7 @@ namespace PBZ.Native
                 string group = category == "goods" ? GoodsCategory(id) : category;
                 if (group == "" || origins.Length == 0 && !Regex.IsMatch(item.S("name"), @"[\u4e00-\u9fff]")) continue;
                 string[] states = new[] { id }.Concat(Aliases.Strings(id)).Select(value =>
-                    CollectionState.Detect(Data.Make("kind", category == "goods" ? "flower" : category, "id", value), p.Slot)).ToArray();
+                    CollectionState.Detect(Data.Make("kind", category == "goods" ? "flower" : category, "id", value), p)).ToArray();
                 string state = states.Contains("done") ? "done" : states.Contains("unknown") ? "unknown" : states[0];
                 string subtitle = origins.Any(pt => pt.S("condition").StartsWith("BPF_BuMieXiaDan_Memory_", StringComparison.Ordinal))
                     ? p.Catalog.Item("goods", "FA_0604").S("name") : item.S("rowName") == item.S("name") ? "" : item.S("rowName");
@@ -156,11 +158,18 @@ namespace PBZ.Native
                     point.S("category"), "state", states.Contains("done") ? "done" : states.Contains("unknown") ? "unknown" : states[0]);
             }
             Row[] rules = p.Gates.SelectMany(g => g.Rows("items").Where(i => i.S("check") == "item").Select(i => i.With("gateName", g.S("name")))).ToArray();
-            return rows.Values.Select(row =>
+            var gearByMaterial = rows.Values.Where(row => Recipes.ContainsKey(row.S("id").ToLowerInvariant()))
+                .ToDictionary(row => Recipes.S(row.S("id").ToLowerInvariant()));
+            Row[] items = rows.Values.Select(row =>
             {
                 string id = row.S("id"), category = row.S("category");
                 Row treasure = category == "treasure" ? p.Treasures.FirstOrDefault(t => t.Strings("ids").Contains(id)) : null;
                 Row book = category == "book" ? Guides.Get("books").Get(id) as Row : null;
+                Row soul = Guides.Get("soulGuides").Get(id) as Row;
+                string product = ComponentProducts.S(id);
+                Row gear;
+                gearByMaterial.TryGetValue(product.Or(id), out gear);
+                string[] components = Guides.Get("soulComponents").Strings(id).Select(part => p.Catalog.Item("goods", part).S("name").Or(part)).ToArray();
                 Row[] origins = row.Rows("origins");
                 Row origin = origins.OrderBy(pt => AccessOrder.N(pt.Get("access").S("state"))).FirstOrDefault();
                 Row rule = rules.Where(r => r.S("item").Equals(id, StringComparison.OrdinalIgnoreCase) && r.S("category") == row.S("inventoryCategory"))
@@ -168,7 +177,13 @@ namespace PBZ.Native
                 Row guide = origin.Get("guide").Dict();
                 Row route = origin.Get("access") as Row ?? CollectionAccess.Result("unknown", "现有资料未能确认具体获取地点或解锁条件。");
                 int bookRank = book.N("minRank", book.N("rank", int.MaxValue));
-                if (origin == null && book != null)
+                if (soul != null)
+                {
+                    guide = soul;
+                    route = p.Rank >= soul.N("rank") || Regions.Any(r => r.S("id") == soul.S("regionId") && r.Flag("available"))
+                        ? access.Route(soul) : CollectionAccess.Result("locked", "先推进至" + soul.S("regionName") + "。");
+                }
+                else if (origin == null && book != null)
                 {
                     guide = book;
                     route = p.Rank < bookRank && bookRank != int.MaxValue
@@ -187,18 +202,39 @@ namespace PBZ.Native
                     guide = Data.Make("steps", new[] { "在" + treasure.S("name") + "寻找" + row.S("name") + "，集齐后交给小张。" },
                         "source", Guides.Get("sources").Get("trophies").S("url"));
                 }
+                if (components.Length > 0) guide = guide.With("steps", guide.Strings("steps").Concat(new[] { "收齐" + string.Join("、", components) + "后合成。" }).ToArray());
+                if (gear != null && guide.S("source") == "") guide = guide.With("source", Guides.Get("soulSources").S(gear.S("category")));
                 if (treasure.Flag("handedIn")) row["state"] = "done";
                 if (row.S("state") == "done") route = CollectionAccess.Result("done", treasure.Flag("handedIn") ? "本周目对应地区的珍宝已交付。" : "已记录本周目收集。");
-                string[] regionIds = origins.Select(pt => pt.S("regionId")).Concat(new[] { book.S("regionId") }).Where(s => s != "").Distinct().ToArray();
-                string[] regionNames = origins.Select(pt => pt.S("regionName")).Concat(new[] { book.S("regionName") }).Where(s => s != "").Distinct().ToArray();
+                string[] regionIds = origins.Select(pt => pt.S("regionId")).Concat(new[] { soul.S("regionId"), book.S("regionId") }).Where(s => s != "").Distinct().ToArray();
+                string[] regionNames = origins.Select(pt => pt.S("regionName")).Concat(new[] { soul.S("regionName"), book.S("regionName") }).Where(s => s != "").Distinct().ToArray();
                 string routeState = route.S("state");
                 bool available = routeState == "ready" || routeState == "route" || routeState == "unknown" &&
                     (Regions.Any(r => regionIds.Contains(r.S("id")) && r.Flag("available")) || book != null && p.Rank >= bookRank);
                 string[] steps = guide.Strings("steps");
                 if (category == "flower" && steps.Length == 0) steps = new[] { "收齐对应记忆花瓣，再合成完整记忆之花。" };
                 return row.With("access", route, "guide", guide, "steps", steps, "regionIds", regionIds, "regionNames", regionNames,
+                    "soulWeapon", gear.S("name"), "soulProduct", product == "" ? "" : p.Catalog.Item("goods", product).S("name").Or(product),
                     "bell", guide.S("bell").Or(origin.Rows("nearest").FirstOrDefault().S("name")), "available", available);
             }).ToArray();
+            var byKey = items.ToDictionary(row => row.S("key"));
+            foreach (Row row in items)
+            {
+                string id = row.S("id"), normalized = id.ToLowerInvariant(), category = row.S("category"), recipe = Recipes.S(normalized);
+                bool pipa = normalized == "cuixinpipa";
+                if (recipe == "" && !pipa) continue;
+                var value = p.ItemRecord(category, id).Get("AlreadySnapSoul");
+                bool transformed = Guides.Get("weaponFormBases").Dict().Any(pair => pair.Value.Str() == id && p.ItemRecord("weapon", pair.Key) != null);
+                string state = transformed || Equals(value, true) || value.Int() > 0 ? "done" : Equals(value, false) || value.Int(-1) == 0 ? "pending" : "unknown";
+                Row material;
+                byKey.TryGetValue(Key("goods", recipe), out material);
+                var repair = Guides.Get("pipaRepair");
+                row["temper"] = Data.Make("state", state, "material", material.S("name").Or(recipe), "form", Guides.Get("soulForms").S(normalized),
+                    "regionIds", material.Strings("regionIds"), "regionNames", material.Strings("regionNames"), "bell", material.S("bell"),
+                    "steps", pipa ? repair.Strings("steps") : material.Strings("steps"),
+                    "source", pipa ? repair.S("source") : material.Get("guide").S("source").Or(Guides.Get("soulSources").S(category)));
+            }
+            return items;
         }
 
         IEnumerable<Row> BuildPickupItems()

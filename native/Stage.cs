@@ -79,11 +79,13 @@ namespace PBZ.Native
             if (Get(system, "bIsFinishGame") is bool && (bool)Get(system, "bIsFinishGame")) rank = 9;
             object lu = questById("MainCh1-ShiXinCun");
             bool afterMu = Killed(slot, "BP_Monster_MuXiaoKui", cycle) || Killed(slot, "BP_Monster_MuXiaoKui_P2", cycle) || Done(lu) || Active(lu, "4") || Completed(lu, "4");
-            bool afterCrusher = Array(Get(Get(slot, "EventPipeline"), "GlobalTags")).Any(x => Text(x) == "achievment.锯理力争.完成");
+            var tags = new HashSet<string>(Array(Get(Get(slot, "EventPipeline"), "GlobalTags")).Select(Text));
+            string victory = new[] { "dhy.力者战斗.2阶段击杀", "dhy.Seq116处决力者.播放结束", "achievment.锯理力争.完成" }.FirstOrDefault(tags.Contains);
+            const string crusherEntry = "dhy.Seq113.力者入战";
             return new Dictionary<string, object> {
                 { "rank", rank }, { "name", Names[rank] }, { "location", location }, { "regions", regions.ToArray() },
                 { "afterMu", afterMu }, { "afterEstate", afterEstate }, { "readyForEstate", Started(estate) }, { "approachingEstate", approachingEstate },
-                { "afterCrusher", afterCrusher }, { "finished", rank == 9 }
+                { "crusherEntry", tags.Contains(crusherEntry) ? crusherEntry : victory ?? "" }, { "afterCrusher", victory != null }, { "finished", rank == 9 }
             };
         }
     }

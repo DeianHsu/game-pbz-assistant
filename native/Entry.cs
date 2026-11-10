@@ -36,6 +36,8 @@ namespace PBZ.Native
                     {
                         window.ShowData(first, collections, new QuestNavigation(first, collections));
                         summary["pages"] = window.CheckPages();
+                        summary["filteredPages"] = Data.Make("slot", accounts[0].Preferred, "tempering", window.CheckPageFilter(2, 4),
+                            "questArchive", window.CheckPageFilter(3, 6));
                     }
                     File.WriteAllText(args[2], Data.Serializer().Serialize(summary));
                     return 0;
@@ -64,6 +66,11 @@ namespace PBZ.Native
                     r.Rows("points").Select(pt => new[] { pt.S("key"), pt.S("name"), pt.S("state"), pt.Get("access").S("state") }).ToArray() }).ToArray(),
                 "collectibles", c.Items.Where(i => i.Get("pickupCategories") == null)
                     .Select(i => new[] { i.S("key"), i.S("state"), i.Get("access").S("state") }).ToArray(),
+                "tempering", c.Items.Where(i => i.Get("temper") != null).Select(i =>
+                {
+                    var temper = i.Get("temper");
+                    return new object[] { i.S("key"), temper.S("state"), temper.S("material"), temper.S("form"), temper.Strings("regionIds"), temper.S("bell"), temper.Strings("steps") };
+                }).ToArray(),
                 "pickupPoints", c.Items.Where(i => i.Get("pickupCategories") != null)
                     .Select(i =>
                     {
@@ -75,7 +82,8 @@ namespace PBZ.Native
                     }).ToArray(),
                 "achievements", p.Achievements.Select(a => new object[] { a.S("id"), a.S("state"), a.Get("progress").Get("value") }).ToArray(),
                 "achievementPlans", new AchievementPlan(p, c, n).Rows.Select(a => new object[] { a.S("id"), a.S("availability"), a.S("availabilityLabel"),
-                    a.S("availabilityReason"), a.Strings("steps"), a.Strings("notes") }).ToArray(),
+                    a.S("availabilityReason"), a.Strings("steps"), a.Strings("notes"), ObjectiveChecks(a) }).ToArray(),
+                "questObjectives", n.Quests.Where(q => q.Rows("objectives").Length > 0).Select(q => new object[] { q.S("id"), ObjectiveChecks(q) }).ToArray(),
                 "treasures", p.Treasures.Select(t => new object[] { t.S("branch"), t.Flag("handedIn"), t.Flag("collected") }).ToArray(),
                 "questOffers", n.Quests.Where(q => q.Flag("canAccept")).Select(q =>
                 {
@@ -83,7 +91,12 @@ namespace PBZ.Native
                     return new[] { q.S("id"), q.S("stateLabel"), target.S("area"), target.S("person"), target.S("place"), target.S("bell"), target.S("next") };
                 }).ToArray(),
                 "quests", n.Quests.Select(q => new object[] { q.S("id"), q.S("state"), q.S("riskLevel"),
-                    q.Rows("targets").Select(t => new[] { t.S("mapId"), t.S("person"), t.Get("access").S("state") }).ToArray() }).ToArray());
+                    q.Rows("targets").Select(t => new[] { t.S("mapId"), t.S("person"), t.Get("access").S("state") }).ToArray(),
+                    q.S("stateLabel"), q.S("catalogNote") }).ToArray());
+        }
+        static object[][] ObjectiveChecks(Row row)
+        {
+            return row.Rows("objectives").Select(o => new[] { o.Get("name"), o.Get("value") }).ToArray();
         }
     }
 }

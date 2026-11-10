@@ -10,6 +10,16 @@ test('地图装备按本周目获取判断，不把继承武器当成本周目�
   s.Inventory.MainWeaponInfos.Blade.AcquiredCycle = 1;
   assert.equal(collectionState({ kind: 'weapon', id: 'Blade' }, s).state, 'done');
 });
+test('武器铸魂形态保留原装备的本周目收集口径', () => {
+  const s = slot(), point = { kind: 'weapon', id: 'XieHuo' };
+  const weapon = s.Inventory.MainWeaponInfos.Long = { AcquiredCycle: 0, AlreadySnapSoul: 1 };
+  assert.equal(collectionState(point, s).state, 'missing');
+  weapon.AcquiredCycle = 1;
+  assert.equal(collectionState(point, s).state, 'done');
+  weapon.AlreadySnapSoul = 0;
+  assert.equal(collectionState(point, s).state, 'missing');
+  assert.equal(collectionState({ kind: 'weapon', id: 'Long' }, s).state, 'done');
+});
 test('已消耗或合成的花瓣仍按本周目获取记录计入', () => {
   const s = slot(); s.Inventory.InventoryInfos.F_01 = { AcquiredCycle: 1, CurrentAmount: 0 };
   assert.equal(collectionState({ kind: 'flower', id: 'F_01' }, s).state, 'done');

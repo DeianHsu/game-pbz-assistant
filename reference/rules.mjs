@@ -1,7 +1,8 @@
-import { additionalCheckpoints, baiXueSteps, checkpointOrder, chivalryEncounters, questAchievements, questFailureRules, sources, unknownQuestFailure } from './risk-data.mjs';
+import { additionalCheckpoints, baiXueSteps, checkpointOrder, chivalryEncounters, cuiCamp, questAchievements, questFailureRules, sources, unknownQuestFailure } from './risk-data.mjs';
 import { ownedItem } from './achievements.mjs';
 import { baiXueNecklaceGiven } from './collection-access.mjs';
 import { detectStage, stageGate } from './stages.mjs';
+import { questArchive } from './quest-catalog.mjs';
 
 const POWERPYX = 'https://www.powerpyx.com/phantom-blade-zero-trophy-guide-roadmap/';
 const GAMERSKY = 'https://www.gamersky.com/handbook/202611/2239917.shtml';
@@ -110,7 +111,10 @@ function zhouRescued(record, has, letter) {
   return has('ddsd.周平子.开笼子') || has('ddsd.周平子.获得遗书') || letter === true
     || branchCompleted(record, '1') || record?.QuestBranches?.some(b => b.BranchID === '1' && b.BranchType === 'EBranchType::BranchActivating');
 }
-function questFailure(id, record, state, tags, slot) {
+function cuiDelivered(record, tags) {
+  return tags.has(cuiCamp.deliveredTag) || requirementResult(cuiCamp, record).satisfied;
+}
+function questFailure(id, record, state, tags, slot, stage) {
   if (state === 'done' || state === 'unknown') return null;
   const rule = questFailureRules[id];
   if (rule && tags.has(rule.tag) && (record || rule.state === 'failed') && !rule.unlessTags?.some(tag => tags.has(tag))
@@ -119,6 +123,10 @@ function questFailure(id, record, state, tags, slot) {
     const context = Object.entries(rule.context || {}).filter(([tag]) => tags.has(tag));
     return { state: state === 'failed' ? state : rule.state || 'interrupted', reason: rule.reason + context.map(([, text]) => text).join(''),
       evidence: [rule.tag, ...context.map(([tag]) => tag)].join('、'), action: rule.action || '', source: rule.source || '' };
+  }
+  if (id === 'XiaoCui' && record && stage.crusherEntry && !cuiDelivered(record, tags)) {
+    return { state: state === 'failed' ? state : 'interrupted', reason: cuiCamp.missed,
+      evidence: stage.crusherEntry, action: cuiCamp.recovery, source: cuiCamp.source };
   }
   return state === 'failed' ? { state, reason: unknownQuestFailure, evidence: record.QuestCompletion } : null;
 }
@@ -175,8 +183,13 @@ export function requirementResult(rule, record) {
   return { satisfied, state };
 }
 
-function evaluateRequirement(rule, slot, catalog, records, achievements) {
+function evaluateRequirement(rule, slot, catalog, records, achievements, cuiReady) {
   if (!rule.check) return { ...requirementResult(rule, records.get(rule.quest)), mode: 'auto' };
+  if (rule.check === 'cui-camp') {
+    return { satisfied: cuiReady, state: cuiReady ? 'done' : questState(records.get(rule.quest)), mode: 'auto',
+      stateLabel: cuiReady ? '战前交付已完成' : '先交付再开战',
+      evidence: cuiReady ? '存档记录了小翠的营地交付分支或墓前事件。' : '存档尚无战前交付完成的记录。' };
+  }
   if (['red-route', 'chivalry', 'cage'].includes(rule.check)) return evaluateTaskRisk(rule, slot, records.get(rule.quest), catalog);
   if (rule.check === 'achievement') {
     const achievement = achievements?.rows.find(a => a.id === rule.achievement);
@@ -211,19 +224,21 @@ export function analyzeSlot(slot, catalog, achievements) {
   const metadata = new Map(catalog.quests.map(q => [q.id, q]));
   const stage = detectStage(slot);
   const tags = new Set(slot.EventPipeline?.GlobalTags || []);
+  const cuiReady = cuiDelivered(records.get('XiaoCui'), tags);
   const baiXueStep = nextBaiXueStep(slot, records, tags);
   const allIds = new Set([...metadata.keys(), ...records.keys()]);
   const quests = [...allIds].map(id => {
     const info = metadata.get(id), record = records.get(id);
-    const status = questState(record), failure = questFailure(id, record, status, tags, slot), state = failure?.state || status;
+    const status = questState(record), failure = questFailure(id, record, status, tags, slot, stage), state = failure?.state || status;
+    const archived = id === 'FengChe' ? state !== 'done' : !record && !failure;
     const branches = (record?.QuestBranches || []).map(branch => ({ id: branch.BranchID,
       state: branch.BranchType, completed: branchCompleted(record, branch.BranchID),
       active: branch.BranchType === 'EBranchType::BranchActivating', ...info?.branches?.[branch.BranchID] }));
     return { id, name: info?.name || id, type: info?.type || (record?.QuestClass?.includes('/Tutorial/') ? 'Tutorial' : 'Other'),
-      state, stateLabel: STATE_LABELS[state], recorded: Boolean(record), branches, failure,
+      state, stateLabel: STATE_LABELS[state], recorded: Boolean(record), branches, failure, catalogNote: archived ? questArchive[id] || '' : '',
       deadlines: checkpoints.filter(g => g.requirements.some(r => r.quest === id || id === 'YongShengDaoZhu' && r.check === 'bai-xue')).map(g => g.name) };
   }).filter(q => q.type !== 'Tutorial' && q.type !== 'Quest_Branchline');
-  const failures = new Map(quests.filter(q => q.failure).map(q => [q.id, q]));
+  const failures = new Map(quests.filter(q => q.failure && !q.catalogNote).map(q => [q.id, q]));
   const has = (id, branch) => requirementResult({ branch }, records.get(id)).satisfied;
   const passed = {
     valley: bossKilled(slot, 'BP_Monster_HookMan_P2'),
@@ -240,12 +255,12 @@ export function analyzeSlot(slot, catalog, achievements) {
     chivalry: questState(records.get('BuMieXiaDan')) === 'done',
     mountain: false,
     mirage: stage.rank >= 7,
-    opera: false, sanmian: questState(records.get('SanMianHunDun')) === 'done', snow: questState(records.get('GeJueXieZi')) === 'done' && questState(records.get('QuanXin')) === 'done',
-    crusher: tags.has('dhy.Seq113.力者入战'), 'crusher-reward': false, treasures: false, cleanup: false
+    opera: false, sanmian: questState(records.get('SanMianHunDun')) === 'done', snow: false,
+    crusher: Boolean(stage.crusherEntry), 'crusher-reward': false, treasures: false, cleanup: false
   };
   const gates = checkpoints.map(gate => {
     const items = gate.requirements.map(rule => {
-      const result = rule.check === 'bai-xue' ? baiXueCheck(baiXueStep, slot, failures) : evaluateRequirement(rule, slot, catalog, records, achievements);
+      const result = rule.check === 'bai-xue' ? baiXueCheck(baiXueStep, slot, failures) : evaluateRequirement(rule, slot, catalog, records, achievements, cuiReady);
       const quest = result.quest || rule.quest, record = records.get(quest), info = metadata.get(quest);
       const current = (rule.check === 'bai-xue' ? [] : record?.QuestBranches || []).filter(b => b.BranchType === 'EBranchType::BranchActivating')
         .map(b => info?.branches?.[b.BranchID]?.objective).filter(Boolean);
@@ -259,7 +274,8 @@ export function analyzeSlot(slot, catalog, achievements) {
         evidence: result.evidence || (record ? `任务状态：${record.QuestCompletion}；已完成分支：${(record.CompletedBranches || []).join('、') || '无记录'}` : '所选槽位没有此任务记录；不直接断言未接取或已失败。') };
     });
     const pending = items.filter(i => !i.optional && !i.satisfied && !i.failure).length;
-    return stageGate({ ...gate, passed: passed[gate.id], items, pending, manual: items.filter(i => !i.satisfied && !i.failure && i.mode === 'manual').length }, stage);
+    return stageGate({ ...gate, passed: passed[gate.id], items, pending, ...(gate.id === 'crusher-reward' && { cuiDelivered: cuiReady }),
+      manual: items.filter(i => !i.satisfied && !i.failure && i.mode === 'manual').length }, stage);
   });
   const counts = Object.fromEntries(['done', 'active', 'failed', 'interrupted', 'unknown'].map(state => [state, quests.filter(q => (q.recorded || q.failure) && q.state === state).length]));
   const system = slot.PBZGameSystem;

@@ -21,16 +21,16 @@ function acceptance(slot, ...ids) {
 test('可接任务按接取地点显示，接取、完成、失败或未知枚举均不重复提示', () => {
   const s = save();
   s.BellManager = { ActivateBellIDs: ['Bell_NLES_003'] };
-  let [windmill] = acceptance(s, 'FengChe');
-  assert.equal(windmill.canAccept, true);
-  assert.equal(windmill.stateLabel, '未接取');
-  const [t] = windmill.navigation.targets;
-  assert.deepEqual([t.mapName, t.person, t.place, t.bell, t.access.label], ['悲泣溪谷', '货郎', '驿站内的货郎摊位', '驿站', '可接取']);
-  assert.equal(windmill.navigation.riskLevel, 'warning');
+  let [archer] = acceptance(s, 'QingLiMenHu');
+  assert.equal(archer.canAccept, true);
+  assert.equal(archer.stateLabel, '未接取');
+  const [t] = archer.navigation.targets;
+  assert.deepEqual([t.mapName, t.person, t.place, t.bell, t.access.label], ['悲泣溪谷', '老弓手', '驿站里坐在屋顶上的老人', '驿站', '可接取']);
+  assert.equal(archer.navigation.riskLevel, 'warning');
   for (const status of ['Started', 'Succeeded', 'Failed', 'Unknown']) {
-    s.Narrative.NarrativeSavedQuests = [record('FengChe', status)];
-    [windmill] = acceptance(s, 'FengChe');
-    assert.equal(windmill.canAccept, false, status);
+    s.Narrative.NarrativeSavedQuests = [record('QingLiMenHu', status)];
+    [archer] = acceptance(s, 'QingLiMenHu');
+    assert.equal(archer.canAccept, false, status);
   }
 });
 
@@ -49,10 +49,10 @@ test('后期铃铛记录不能单独开放后期任务，已到庞镇仍要核�
   assert.equal(brother.navigation.targets[0].place, '黄家大宅二楼卧室');
 });
 
-test('跨过白赤练或驿站变怪后，风车不再列为可接；缺少事件记录也不推定开放', () => {
+test('跨过白赤练或驿站变怪后，清理门户不再列为可接；缺少事件记录也不推定开放', () => {
   const s = save();
   s.BellManager = { ActivateBellIDs: ['Bell_NLES_003'] };
-  const canAccept = () => acceptance(s, 'FengChe')[0].canAccept;
+  const canAccept = () => acceptance(s, 'QingLiMenHu')[0].canAccept;
   s.Narrative.NarrativeSavedQuests = [record('MainCh1-LinZhongShaJi', 'Succeeded')];
   assert.equal(canAccept(), false);
   s.Narrative.NarrativeSavedQuests = [];
@@ -60,6 +60,35 @@ test('跨过白赤练或驿站变怪后，风车不再列为可接；缺少事�
   assert.equal(canAccept(), false);
   delete s.EventPipeline.GlobalTags;
   assert.equal(canAccept(), false);
+});
+
+test('风车的流程冲突在白赤练前后均留档，保留游戏记录的实际任务状态', () => {
+  const s = save(), c = { ...catalog, bells: {}, quests: [{ id: 'FengChe', name: '风车', type: 'Simple' }] };
+  s.BellManager = { ActivateBellIDs: ['Bell_NLES_003'] };
+  const read = () => {
+    const a = analyzeSlot(s, c);
+    assert.equal(a.questFailures.length, 0);
+    return analyzeQuestNavigation(s, c, a, collections).quests.find(q => q.id === 'FengChe');
+  };
+  const checkArchived = state => {
+    const windmill = read();
+    assert.equal(windmill.state, state);
+    assert.match(windmill.catalogNote, /流程冲突/);
+    assert.equal(windmill.canAccept, false);
+    assert.deepEqual(windmill.navigation.targets, []);
+  };
+  checkArchived('missing');
+
+  s.Narrative.NarrativeSavedQuests.push(record('MainCh1-LinZhongShaJi', 'Succeeded'));
+  s.EventPipeline.GlobalTags.push('quest.一个不留.营地变怪');
+  s.Inventory.InventoryInfos.I_01005 = { AcquiredCycle: 1, CurrentAmount: 1 };
+  checkArchived('missing');
+  s.Narrative.NarrativeSavedQuests.push({ ...record('FengChe'), QuestBranches: [{ BranchID: '2', BranchType: 'EBranchType::BranchActivating' }] });
+  checkArchived('active');
+  s.Narrative.NarrativeSavedQuests[1] = record('FengChe', 'Failed');
+  checkArchived('failed');
+  s.Narrative.NarrativeSavedQuests[1] = record('FengChe', 'Succeeded');
+  assert.equal(read().catalogNote, '');
 });
 
 test('玉儿移动后只显示最新接取地点，女织死亡后隐藏未接的入梦祈子', () => {
@@ -235,6 +264,18 @@ test('完成项归档、明确失败停止列可继续；未知枚举不被地�
 test('无法定位的目标单列，不用详情里的接取地图强行归类', () => {
   const q = quest('NewQuest', ['1']); q.branches[0].objective = '找到那个人'; q.branches[0].details = '最初在陆家村认识了他。';
   assert.equal(run(q).targets[0].mapId, 'unknown');
+});
+test('留档任务不生成假目标，有实档记录的任务仍按实际分支定位', () => {
+  const s = save();
+  const quests = () => acceptance(s, 'DuanZhi', 'LongZhu', 'BaiShanMiWen');
+  assert.match(quests()[0].catalogNote, /断指/);
+  assert.match(quests()[1].catalogNote, /血脉觉醒/);
+  assert.equal(quests()[2].catalogNote, '');
+  assert.ok(quests().every(q => q.navigation.targets.length === 0));
+  s.Narrative.NarrativeSavedQuests.push({ ...record('DuanZhi'), QuestBranches: [{ BranchID: '1', BranchType: 'EBranchType::BranchActivating' }] });
+  assert.equal(quests()[0].catalogNote, '');
+  assert.equal(quests()[0].navigation.targets[0].mapId, 'DuanHunShan');
+  assert.equal(run(quest('XiongFu', ['1'])).targets[0].mapId, 'XiGu');
 });
 test('副本、进度或未定位数据不会修改原始存档与分析对象', () => {
   const s = save(), q = quest('HongFangZi', ['S1', 'S2']), a = analysis([q]);

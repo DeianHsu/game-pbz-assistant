@@ -58,12 +58,12 @@ test('截图中的榕树在任务已接且附近已到达时可挑战，无需�
   assert.equal(access.state, 'ready');
   assert.match(access.reason, /无需等后期/);
 });
-test('尚未接取榕树任务会说明对话前置；只接任务不能保证远处通路已开', () => {
+test('尚未接取榕树任务会说明对话前置；接取后未到达时给出本区路线', () => {
   const p = point({ kind: 'banyan', id: undefined, order: 1 }), s = save();
   assert.equal(collectionAccess(p, s, true).state, 'locked');
   s.Narrative.NarrativeSavedQuests.push(record('RongShuZhiXin'));
   p.nearest[0].activated = false;
-  assert.equal(collectionAccess(p, s, true).state, 'unknown');
+  assert.equal(collectionAccess(p, s, true).state, 'route');
 });
 test('龙柱试炼已开启时不会把难度高误判为后期剧情锁', () => {
   const s = save();
@@ -76,15 +76,6 @@ test('普通未收集与发奖流程名称不能被当作可获取或门锁依�
   const access = collectionAccess(point({ kind: 'accessory', id: 'Other', condition: 'BPF_BossDeath' }), save(), true);
   assert.equal(access.state, 'unknown');
 });
-test('三面奖励区分未冰封、只冰封与魔偶已经激活', () => {
-  const p = point({ kind: 'weapon', id: 'CiGuHunDun' }), s = save();
-  assert.equal(collectionAccess(p, s, true).state, 'locked');
-  s.EventPipeline.GlobalTags.push('fjzl.风雪数据层.激活');
-  assert.equal(collectionAccess(p, s, true).state, 'unknown');
-  s.EventPipeline.GlobalTags.push('fjzl.三头魔偶.激活');
-  assert.equal(collectionAccess(p, s, true).state, 'ready');
-});
-
 const fullSave = () => {
   const s = save();
   Object.assign(s.Inventory, { MainWeaponInfos: {}, ShaChiWeaponInfo: {}, AccessoryInfos: {}, MedicineInfos: {} });
@@ -92,6 +83,82 @@ const fullSave = () => {
   return s;
 };
 const pangPoint = (kind, id, rawMap = 'PangZhen') => point({ rawMap, kind, id });
+
+test('刺骨混沌逐项核对冰封、初战、三片记忆和炽刃', () => {
+  const p = point({ kind: 'weapon', id: 'CiGuHunDun' }), s = fullSave();
+  const read = () => collectionAccess(p, s, true);
+  assert.match(read().reason, /冰封/);
+  s.EventPipeline.GlobalTags.push('fjzl.风雪数据层.激活', 'fjzl.三头魔偶.激活');
+  for (const id of ['F_08041', 'F_08042']) s.Inventory.InventoryInfos[id] = { AcquiredCycle: 1, CurrentAmount: 0 };
+  assert.equal(read().state, 'locked');
+  assert.match(read().reason, /第 3 片/);
+  assert.doesNotMatch(read().reason, /第 [12] 片/);
+  s.EventPipeline.GlobalTags.push('fjzl.三头魔偶.记忆之花3');
+  assert.match(read().reason, /炽刃/);
+  s.Inventory.MainWeaponInfos.Long = { AcquiredCycle: 0, AlreadySnapSoul: 0, WeaponLevel: 10 };
+  assert.equal(read().state, 'locked');
+  s.Inventory.MainWeaponInfos.Long.AlreadySnapSoul = 1;
+  assert.equal(read().state, 'ready', '已铸魂的长形黑伤可在本周目用于战斗');
+  delete s.Inventory.MainWeaponInfos.Long;
+  s.Inventory.MainWeaponInfos.XieHuo = { AcquiredCycle: 0 };
+  assert.equal(read().state, 'ready');
+});
+
+test('戏梦山庄的虎炮战、挂画后花瓣、战后花瓣和玉儿对话分别判断', () => {
+  const s = fullSave(), at = (kind, id) => collectionAccess(pangPoint(kind, id, 'XiMeng'), s, true);
+  const tiger = () => at('phantom', 'TigerCannon');
+  const studyPetal = () => at('flower', 'F_08043');
+  const aftermath = () => [at('flower', 'FS_12004').state, at('flower', 'FS_14001').state];
+  assert.equal(tiger().state, 'locked');
+  assert.match(tiger().reason, /挂画/);
+  s.EventPipeline.GlobalTags.push('XMSZ.冷荼书房.挂画幻像消失');
+  assert.equal(tiger().state, 'ready');
+  assert.equal(studyPetal().state, 'ready', '打开挂画可先收集第三片三面魔偶记忆');
+  assert.deepEqual(aftermath(), ['locked', 'locked']);
+  s.EventPipeline.GlobalTags.push('qsd.Boss战.结束');
+  assert.deepEqual(aftermath(), ['ready', 'locked']);
+  s.EventPipeline.GlobalTags.push('qsd.Boss战.玉儿对话');
+  assert.deepEqual(aftermath(), ['ready', 'ready']);
+});
+
+test('百相傩面和月雷华灯指出本区缺项，已消耗或交付的道具仍算取得', () => {
+  const s = fullSave();
+  const mask = pangPoint('accessory', 'AC_MagicWeapon', 'XiMeng');
+  const lamp = pangPoint('accessory', 'AC_Electrified', 'XiMeng');
+  const read = p => collectionAccess(p, s, true);
+  for (const id of ['AC_MagicWeapon_1', 'AC_MagicWeapon_3', 'T_12001', 'T_12002'])
+    s.Inventory.InventoryInfos[id] = { AcquiredCycle: 1, CurrentAmount: 0 };
+  assert.deepEqual(read(mask).requirements.filter(r => !r.satisfied).map(r => r.text), ['取得傩面碎片·怒']);
+  assert.deepEqual(read(lamp).requirements.filter(r => !r.satisfied).map(r => r.text), ['取得云月金簪']);
+  s.Inventory.InventoryInfos.AC_MagicWeapon_2 = { AcquiredCycle: 0 };
+  assert.equal(read(mask).state, 'locked');
+  s.Inventory.InventoryInfos.AC_MagicWeapon_2.AcquiredCycle = 1;
+  assert.equal(read(mask).state, 'ready');
+  const q = record('MiaoShouKongKong'); q.CompletedBranches = ['4-1'];
+  s.Narrative.NarrativeSavedQuests.push(q);
+  assert.equal(read(lamp).state, 'locked');
+  q.CompletedBranches.push('6-1');
+  assert.equal(read(lamp).state, 'ready');
+});
+
+test('陆家村的井下路线读取三位大师解脱记录，荡秽结算不代替井口开放', () => {
+  const s = fullSave(), p = pangPoint('flower', 'F_05041', 'LuJiaCun');
+  s.EventPipeline.GlobalTags.push('ljc.击杀.荡秽', 'bsmw.掌门本体.已解脱1', 'bsmw.掌门本体.已解脱2');
+  assert.equal(collectionAccess(p, s, true).state, 'locked');
+  s.EventPipeline.GlobalTags.push('bsmw.掌门本体.已解脱3');
+  assert.equal(collectionAccess(p, s, true).state, 'ready');
+});
+
+test('沐小葵战后根据追加战证据识别妖锯是否已经错过', () => {
+  const s = fullSave(), p = pangPoint('weapon', 'YuuBlade', 'LuJiaCun');
+  const read = () => collectionAccess(p, s, true);
+  assert.equal(read().state, 'locked');
+  assert.match(read().reason, /红丝带/);
+  s.EventPipeline.GlobalTags.push('ljc.沐小葵.战斗结束');
+  assert.equal(read().label, '已错过');
+  s.EventPipeline.GlobalTags.push('ljc.沐小葵.玉妖铁鬼死亡');
+  assert.equal(read().state, 'ready');
+});
 
 test('庞镇烧枝支路单独检查烈焰狮头，继承的能力可用但钥匙仍按本周目', () => {
   const s = fullSave(), p = pangPoint('bell', 'Bell_SZ_018');

@@ -1,6 +1,6 @@
 import { routeAccess } from './collection-access.mjs';
 import { accessSources } from './collection-access-data.mjs';
-import { chivalryEncounters, questAchievements } from './risk-data.mjs';
+import { chivalryEncounters, cuiCamp, questAchievements } from './risk-data.mjs';
 import { analyzeTreasures } from './achievements.mjs';
 import { questOffers } from './quest-offers.mjs';
 
@@ -74,17 +74,17 @@ add('MoJiaoZhiNv', 'S1 1', 'ZhengDaoDaYing', '红衣女剑客／女弟子·鸽�
 add('WuXiangWang', '1', 'PangZhen', '雨玲·市集酒楼顶层，交付遗书', { needs: ['pipa', 'zhouLetter'], source: accessSources.pang });
 add('WuXiangWang', 'S1', 'DengDingShanDao', '周平子·先推桥开笼救人，再取得遗书', { source: accessSources.mountain });
 add('RuMengQiZi', '1 2', 'LuJiaCun', '女织／装有女织意识的人偶·三人偶水井旁', { source: 'https://www.gamersky.com/handbook/202610/2236093_16.shtml' });
-add('XiongFu', '1 S1', null, '四凶斧罪证·书籍分散地点待逐篇核对');
+add('XiongFu', '1', 'XiGu', '四凶斧案卷·悲泣溪谷', { next: '按进度明细查缺。谋士许丰的密信需推进陆家村的「一个不留」后回驿站，进圣母像山洞，用锁链上到洞外平台拾取。', source: 'https://www.gamersky.com/handbook/202610/2236093_4.shtml' });
+add('XiongFu', 'S1', 'XiGu', '害怕的弟子·驿站路边房屋', { bell: '驿站', source: 'https://www.gamersky.com/handbook/202610/2236093_4.shtml' });
 add('XiongFu', 'S2', 'XiGu', '斧老大彭猛');
 add('XiongFu', '2', 'PangZhen', '八卦童子·八卦阁');
 add('XiangJianHeJi', '1', 'MeiGuHu', '农户的弟弟·梅谷村东岛船坞');
 add('XiaoCui', '1 2 3', 'DengDingShanDao', '陆三迁·小翠的爷爷／山门与囚笼');
 add('XiaoCui', '2-ex 4-A 4-B', 'DengDingShanDao', '陆三迁·宗祠附近回访后续对话');
-add('XiaoCui', '5', 'DuanHunYa', '小翠父母·最后营地');
+add('XiaoCui', '5', 'DuanHunYa', '小翠父母·最后的正道营地', { bell: cuiCamp.bell, next: cuiCamp.action, source: cuiCamp.source });
 add('JiangHuRenShi', '1', 'DengDingShanDao', '江湖人士·牢房／横刀毕峰', { source: accessSources.mountain });
 add('QuanXin', '1', 'FuJiZhiLin', '铁拳门主墓碑·遗冢地', { ice: true });
 add('ZaiHuiXiongZhang', '1 S1', 'MeiGuHu', '阿瑾·陆家村浅滩船坞', { bell: '陆家村浅滩船坞', source: 'https://www.gamersky.com/handbook/202611/2240668.shtml' });
-add('FengChe', '1 2', 'XiGu', '货郎／遗失风车');
 add('TouPaiHuaDan', '1 2 3', 'PangZhen', '天香阁门童／头牌花旦舞扇');
 add('TouPaiHuaDan', '4', 'PangZhen', '头牌花旦人偶·地下酒馆');
 add('BaiShanMiWen', '1 2 3 S1', 'ZhengDaoDaYing', '毕桃桃／孟小师妹／玉璧前的肉身');
@@ -236,46 +236,50 @@ function findOffer(q, slot, analysis, bells) {
   });
 }
 
-function resolveOffer(offer, catalog) {
+function resolveOffer(offer, catalog, closed = false) {
   const [area, , mapId] = maps[offer.map];
   return { mapId, mapName: maps[mapId]?.[0] || area, area, person: offer.person, place: offer.place, bell: catalog.bells?.[offer.bellId] || '',
-    next: offer.action, warning: offer.warning || '', source: offer.source,
-    access: { state: 'ready', label: '可接取', reason: '已核对接取点附近的到达记录及已知前置。' } };
+    next: closed ? '' : offer.action, warning: closed ? '' : offer.warning || '', source: offer.source,
+    access: closed ? { state: 'locked', label: '接取已关闭', reason: offer.closedReason }
+      : { state: 'ready', label: '可接取', reason: '已核对接取点附近的到达记录及已知前置。' } };
 }
 
 export function analyzeQuestNavigation(slot, catalog, analysis, collections) {
   const treasures = analyzeTreasures(slot, catalog);
   const activated = slot.BellManager?.ActivateBellIDs;
   const bells = new Set(Array.isArray(activated) ? activated : []);
+  const tags = slot.EventPipeline?.GlobalTags;
   const quests = analysis.quests.map(q => {
-    const active = q.branches.filter(b => b.active), info = catalog.quests.find(i => i.id === q.id);
-    const first = q.id === 'MoJiaoZhiNv' ? 'S1' : Object.keys(info?.branches || {})[0];
-    const branches = q.state === 'done' ? [] : active.length ? active : first ? [{ id: first, ...info.branches[first] }] : [];
+    if (q.catalogNote) return { ...q, actionable: false, canAccept: false, settled: false,
+      navigation: { targets: [], risks: [], riskLevel: 'none', achievements: [] } };
+    const active = q.branches.filter(b => b.active);
+    const settled = q.id === 'MiaoShouKongKong' && q.state === 'active' && treasures.every(group => group.handedIn);
+    const branches = q.state === 'done' || settled ? [] : active;
     const failed = q.state === 'failed' || q.state === 'interrupted';
     const step = analysis.baiXueStep, snowChain = Boolean(step) && ['BaiXue', 'YongShengDaoZhu'].includes(q.id);
     const snowTarget = snowChain && step.quest === q.id && Boolean(step.map) && !failed;
     const snowStart = q.state === 'missing' && ['start', 'puppet'].includes(step?.id);
     const offer = findOffer(q, slot, analysis, bells);
-    const targets = offer ? [resolveOffer(offer, catalog)] : snowTarget
+    const closed = !q.recorded && q.state === 'missing' && Array.isArray(tags) && questOffers[q.id]?.find(o => o.closedReason && o.cutoffs.some(tag => tags.includes(tag)));
+    const targets = offer ? [resolveOffer(offer, catalog)] : closed ? [resolveOffer(closed, catalog, true)] : snowTarget
       ? [resolveTarget({ ...step, next: step.action }, { id: step.branch, objective: step.title }, slot, analysis.stage)]
       : !snowChain || failed ? branches.flatMap(branch => branchTargets(q, branch, slot, collections, catalog, treasures).map(t => resolveTarget(t, branch, slot, analysis.stage))) : [];
-    if (!targets.length && (!snowChain || failed) && q.state !== 'done' && !['JiaoTuSanKu', 'MiaoShouKongKong'].includes(q.id)) targets.push(resolveTarget(target(null, '尚无可定位的活动步骤'), branches[0] || { id: '', objective: '' }, slot, analysis.stage));
+    if (!targets.length && (!snowChain || failed) && (q.recorded || failed) && q.state !== 'done' && !['JiaoTuSanKu', 'MiaoShouKongKong'].includes(q.id)) targets.push(resolveTarget(target(null, '任务日志未给出可定位的步骤'), branches[0] || { id: '', objective: '' }, slot, analysis.stage));
     if (failed) for (const t of targets) t.access = { state: 'locked', label: q.state === 'interrupted' ? '任务已中断' : '任务已失败',
       reason: q.failure?.reason || '原生任务日志明确记录失败。' };
     if (q.state === 'unknown') for (const t of targets) t.access = { state: 'unknown', label: '任务状态待核实', reason: '任务状态枚举尚未识别，暂不推断当前能否继续。' };
     const linked = analysis.gates.flatMap(g => g.items.filter(i => !i.satisfied && (i.quest === q.id
       || q.id === 'MiaoShouKongKong' && g.id === 'opera' && active.some(b => ['6', '6-1'].includes(b.id))))
       .filter(() => !g.planning).map(i => ({ gateId: g.id, gateName: g.name, title: i.title, action: i.action, impact: i.impact || '',
-        level: g.passed ? 'urgent' : i.available ? 'warning' : 'future', achievements: i.achievements, verification: i.verification, source: i.source })));
+        level: g.passed || i.available && i.alert ? 'urgent' : i.available ? 'warning' : 'future', achievements: i.achievements, verification: i.verification, source: i.source })));
     const risks = q.state === 'done' || failed ? [] : linked;
     const achievementIds = new Set([...(questAchievements[q.id] || []), ...linked.flatMap(r => r.achievements.map(a => a.id))]);
     const actionable = snowTarget && !snowStart && analysis.gates.some(g => g.id === 'mountain' && g.available);
-    const stateLabel = offer ? '未接取' : snowTarget && q.state === 'missing' && !snowStart ? '路线可继续' : q.stateLabel;
-    return { ...q, actionable, canAccept: Boolean(offer), stateLabel, navigation: { targets, risks, riskLevel: failed || risks.some(r => r.level === 'urgent') ? 'urgent' : offer?.warning || risks.some(r => r.level === 'warning') ? 'warning' : risks.length ? 'future' : 'none',
-      achievements: [...achievementIds].map(id => ({ id, name: catalog.achievements?.find(a => a.id === id)?.name || id })),
-      predicted: !offer && !active.length && q.state !== 'done' } };
+    const stateLabel = offer ? '未接取' : closed ? '接取已关闭' : settled ? '五区已交付' : snowTarget && q.state === 'missing' && !snowStart ? '路线可继续' : q.stateLabel;
+    return { ...q, actionable, canAccept: Boolean(offer), stateLabel, settled, navigation: { targets, risks, riskLevel: failed || risks.some(r => r.level === 'urgent') ? 'urgent' : offer?.warning || risks.some(r => r.level === 'warning') ? 'warning' : risks.length ? 'future' : 'none',
+      achievements: [...achievementIds].map(id => ({ id, name: catalog.achievements?.find(a => a.id === id)?.name || id })) } };
   });
-  const current = quests.filter(q => q.recorded && q.state !== 'done');
+  const current = quests.filter(q => q.recorded && q.state !== 'done' && !q.settled && !q.catalogNote);
   return { quests, taskNavigation: { currentMap: collections.regions.find(m => m.current)?.id || null,
     active: current.length, mapped: current.filter(q => q.navigation.targets.some(t => t.mapId !== 'unknown')).length,
     blocked: current.filter(q => q.navigation.targets.length && q.navigation.targets.every(t => t.access.state === 'locked')).length,

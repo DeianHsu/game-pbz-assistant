@@ -29,8 +29,10 @@ export function detectStage(slot) {
   if (slot.PBZGameSystem?.bIsFinishGame === true) rank = 9;
   const lu = quests.get('MainCh1-ShiXinCun');
   const afterMu = killed('BP_Monster_MuXiaoKui') || killed('BP_Monster_MuXiaoKui_P2') || done(lu) || active(lu, '4') || completed(lu, '4');
+  const victory = ['dhy.力者战斗.2阶段击杀', 'dhy.Seq116处决力者.播放结束', 'achievment.锯理力争.完成'].find(tag => tags.has(tag));
+  const crusherEntry = tags.has('dhy.Seq113.力者入战') ? 'dhy.Seq113.力者入战' : victory || '';
   return { rank, name: names[rank], location, regions, afterMu, afterEstate,
-    readyForEstate: started(estate), approachingEstate, afterCrusher: tags.has('achievment.锯理力争.完成'), finished: rank === 9 };
+    readyForEstate: started(estate), approachingEstate, crusherEntry, afterCrusher: Boolean(victory), finished: rank === 9 };
 }
 
 const minimumStage = {
@@ -53,7 +55,8 @@ export function isGateAvailable(id, stage) {
 
 export function stageGate(gate, stage) {
   const available = isGateAvailable(gate.id, stage);
-  const items = gate.items.map(item => ({ ...item, available: available && (gate.id !== 'treasures' || stage.rank >= treasureStages[item.branch]) }));
+  const items = gate.items.map(item => ({ ...item, available: available && (gate.id !== 'treasures' || stage.rank >= treasureStages[item.branch])
+    && (gate.id !== 'crusher-reward' || gate.cuiDelivered) }));
   const current = items.filter(i => i.available && !i.optional && !i.satisfied && !i.failure);
   return { ...gate, available, items, currentPending: current.length, currentManual: current.filter(i => i.mode === 'manual').length };
 }

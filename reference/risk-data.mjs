@@ -47,6 +47,16 @@ export const questAchievements = {
 
 // Explicit events from the native quest and NPC graphs. Shared cutoffs apply to recorded tasks only.
 export const unknownQuestFailure = '游戏日志已标记任务失败，存档未记录具体原因。';
+export const cuiCamp = {
+  branch: '5', branchOnly: true,
+  bell: '最后的正道营地',
+  action: '先在最后的正道营地找陆解元，交还小翠的红头绳和陆三迁的信，同意安葬家人并完成墓前对话。之后再打力者和锯者。',
+  alert: '小翠战前截止 · 先在最后的正道营地交信和红头绳，完成安葬，再打力者和锯者。',
+  deliveredTag: 'xsd.陆解元.可干力者',
+  missed: '已进入力者和锯者的首领战，战前未完成小翠父母的会面，陆解元的战后奖励路线已中断。',
+  recovery: '回到首领战开始前的存档，在最后的正道营地向陆解元交付信物并安葬家人。',
+  source: 'https://pbz-wiki.org/zh/guides/cui-quest/'
+};
 export const questFailureRules = {
   XiaoCui: {
     tag: 'ddsd.陆三迁2.死亡', unlessBranches: ['3'],
@@ -76,7 +86,7 @@ export const questFailureRules = {
     tag: 'quest.任务中断.抵达陆家村', unlessBranches: ['1'],
     reason: '抵达陆家村前，尚未完成血肉花的第一个目标。', source: sources.missables.url
   },
-  ...Object.fromEntries(['FengChe', 'JiuSiFuShang', 'DaoYiYouDao', 'QingLiMenHu', 'NanYanZhiYin'].map(id => [id, {
+  ...Object.fromEntries(['JiuSiFuShang', 'DaoYiYouDao', 'QingLiMenHu', 'NanYanZhiYin'].map(id => [id, {
     tag: 'quest.一个不留.营地变怪', reason: '任务未完成时，驿站与飞贼营地已触发变异，相关人物的原有任务路线已中断。',
     source: sources.missables.url
   }]))
@@ -160,9 +170,11 @@ export const additionalCheckpoints = [
       { quest: 'YiBiZhiDao', title: '完成以彼之道的指定武器切磋', action: '回访森林塔顶，按玉妖与铁鬼的限制使用妖锯、铁拳套切磋并领奖。', achievements: ['ACH_047'], impact: '铸魂候选材料。' },
       { quest: 'QuanXin', title: '完成拳心并领取碎片·壳', action: '塔顶对话后调查遗冢地墓碑，核对拳心碎片·壳。', achievements: ['ACH_047'], impact: '与核配对用于铁拳套铸魂。' }
     ] },
-  { id: 'crusher', name: '挑战力者和锯者前', regions: ['DuanHun', 'DengDing', 'HunDuan'], source: sources.snow.url,
-    note: '先与最后营地的小翠父母会面并交付信物。部分攻略把整个小翠任务写成战前完成；此处只核对战前会面分支，战后奖励另列。',
-    requirements: [{ quest: 'XiaoCui', branch: '5', title: '找到小翠父母并交付信物', action: '在最后的正道营地处理小翠父母的对话，再进入首领战。' }] },
+  { id: 'crusher', name: '挑战力者和锯者前', regions: ['DuanHun', 'DengDing', 'HunDuan'], source: cuiCamp.source,
+    note: '一旦进入首领战，小翠的战前会面就会关闭。战后再与陆解元对话领取白山派头带。',
+    requirements: [{ quest: 'XiaoCui', branch: cuiCamp.branch, check: 'cui-camp', title: '小翠 · 交付信物并安葬前，先别打力者和锯者',
+      bell: cuiCamp.bell, action: cuiCamp.action, alert: cuiCamp.alert,
+      verification: '按小翠的战前分支、陆解元的营地事件和首领战入战事件核对。' }] },
   { id: 'crusher-reward', name: '力者和锯者战后', source: sources.cui.url,
     note: '奖励检查独立于战前会面，避免要求玩家在开打前取得战后材料。',
     requirements: [{ check: 'item', category: 'goods', item: 'TU_11007', title: '领取白山派头带', action: '战后与小翠父亲完成最后对话并检查铸魂材料。', achievements: ['ACH_041'], impact: '武器铸魂候选，计数成就允许其他武器替代。' }] },

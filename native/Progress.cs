@@ -19,6 +19,7 @@ namespace PBZ.Native
             { "goods", "InventoryInfos" }, { "weapon", "MainWeaponInfos" }, { "phantom", "ShaChiWeaponInfo" },
             { "accessory", "AccessoryInfos" }, { "medicine", "MedicineInfos" }
         };
+        static readonly Row WeaponFormBases = Guides.Get("weaponFormBases").Dict();
         public readonly Catalog Catalog;
         public readonly Row Slot, StageInfo, SystemInfo, BaiXueStep;
         public readonly Row[] Treasures, Achievements, Gates, Quests;
@@ -47,11 +48,11 @@ namespace PBZ.Native
             Rank = StageInfo.N("rank");
             Location = SystemInfo.S("CurrentLevelName");
             string bell = SystemInfo.S("LastSaveActorID");
-            Bell = catalog.Local(bell).Or(bell);
+            Bell = catalog.BellName(bell).Or(bell);
             Treasures = BuildTreasures();
             Achievements = BuildAchievements(account.Entries.Get("__Achievements__"));
             Quests = BuildQuests();
-            QuestFailures = Quests.Where(q => q.Get("failure") != null).ToDictionary(q => q.S("id"));
+            QuestFailures = Quests.Where(q => q.Get("failure") != null && q.S("catalogNote") == "").ToDictionary(q => q.S("id"));
             BaiXueStep = BuildBaiXueStep();
             Gates = BuildGates();
         }
@@ -85,12 +86,20 @@ namespace PBZ.Native
             string field;
             return Fields.TryGetValue(category, out field) ? Slot.Get("Inventory").Get(field) as Row : null;
         }
+        static object FindEntry(Row table, string id, bool exact)
+        {
+            return exact ? table.Get(id) : table.FirstOrDefault(p => p.Key.Equals(id, StringComparison.OrdinalIgnoreCase)).Value;
+        }
         public Row ItemRecord(string category, string id, bool exact = false)
         {
             var table = Inventory(category);
             if (table == null) return null;
-            if (exact) return table.Get(id) as Row;
-            return table.FirstOrDefault(p => p.Key.Equals(id, StringComparison.OrdinalIgnoreCase)).Value as Row;
+            Row record = FindEntry(table, id, exact) as Row;
+            if (record != null || category != "weapon") return record;
+            string baseId = FindEntry(WeaponFormBases, id, exact) as string;
+            if (baseId == null) return null;
+            Row baseRecord = FindEntry(table, baseId, exact) as Row;
+            return baseRecord.Flag("AlreadySnapSoul") || baseRecord.N("AlreadySnapSoul") > 0 ? baseRecord : null;
         }
         public bool? Acquired(string id, string category = "goods", bool possession = false, bool exact = false)
         {
@@ -106,6 +115,35 @@ namespace PBZ.Native
             if (Inventory(category) == null) return null;
             Row record = ItemRecord(category, id);
             return record != null && (category != "goods" || record.N("CurrentAmount") > 0 || record.N("MaxAmount") > 0);
+        }
+
+        bool? ObjectiveEvidence(Row evidence)
+        {
+            string id = evidence.S("id");
+            switch (evidence.S("kind"))
+            {
+                case "tag": return Tag(id);
+                case "killed": return Killed(id);
+                case "item": return evidence.Flag("possession") ? Owned(evidence.S("category"), id) : Acquired(id, evidence.S("category"));
+                case "branch": return State(id) == "unknown" ? (bool?)null : BranchCompleted(Quest(id), evidence.S("step"));
+                case "done": return State(id) == "unknown" ? (bool?)null : Done(id);
+                default: return null;
+            }
+        }
+        public static Row Objective(string name, bool? completed, string area = "")
+        {
+            return Data.Make("name", name, "value", completed.HasValue ? (int?)(completed.Value ? 1 : 0) : null, "area", area);
+        }
+        public Row[] ReadObjectives(Row[] definitions)
+        {
+            return definitions.Select(definition =>
+            {
+                string item = definition.S("item"), name = definition.S("name");
+                if (name == "") name = Catalog.Item("goods", item).S("name").Or(item);
+                bool?[] values = definition.Rows("evidence").Select(ObjectiveEvidence).ToArray();
+                bool? completed = values.Contains(true) ? true : values.All(value => value == false) ? (bool?)false : null;
+                return Objective(name, completed);
+            }).ToArray();
         }
 
         Row[] BuildTreasures()
@@ -233,6 +271,14 @@ namespace PBZ.Native
             return Tags.Contains("ddsd.周平子.开笼子") || Tags.Contains("ddsd.周平子.获得遗书") ||
                 letter == true || BranchActive(record, "1") || BranchCompleted(record, "1");
         }
+        bool CuiDelivered
+        {
+            get
+            {
+                var camp = Guides.Get("cuiCamp");
+                return Branch("XiaoCui", camp.S("branch")) == true || Tags.Contains(camp.S("deliveredTag"));
+            }
+        }
         Row QuestFailure(string id, Row record, string state)
         {
             if (state == "done" || state == "unknown") return null;
@@ -248,6 +294,12 @@ namespace PBZ.Native
                     "reason", rule.S("reason") + string.Concat(context.Select(pair => pair.Value.Str())),
                     "evidence", string.Join("、", new[] { tag }.Concat(context.Select(pair => pair.Key))),
                     "action", rule.S("action"), "source", rule.S("source"));
+            }
+            if (id == "XiaoCui" && record != null && StageInfo.S("crusherEntry") != "" && !CuiDelivered)
+            {
+                var camp = Guides.Get("cuiCamp");
+                return Data.Make("state", state == "failed" ? state : "interrupted", "reason", camp.S("missed"),
+                    "evidence", StageInfo.S("crusherEntry"), "action", camp.S("recovery"), "source", camp.S("source"));
             }
             return state == "failed" ? Data.Make("state", state, "reason", Guides.S("unknownQuestFailure"), "evidence", record.S("QuestCompletion")) : null;
         }
@@ -315,6 +367,10 @@ namespace PBZ.Native
                         ? "所选槽位没有此任务记录。" : "任务状态：" + record.S("QuestCompletion") + "。已完成分支：" + string.Join("、", record.Strings("CompletedBranches")));
                 case "red-route": case "chivalry": case "cage": return Special(rule, record);
                 case "bai-xue": return BaiXueCheck();
+                case "cui-camp":
+                    bool delivered = CuiDelivered;
+                    return Result(delivered ? "done" : State(id), delivered, delivered ? "存档记录了小翠的营地交付分支或墓前事件。" : "存档尚无战前交付完成的记录。")
+                        .With("stateLabel", delivered ? "战前交付已完成" : "先交付再开战");
                 case "achievement":
                     Row a = Achievements.FirstOrDefault(row => row.S("id") == rule.S("achievement"));
                     return Result(a.S("state").Or("unknown"), a.S("state") == "done", "按本地账号成就解锁记录判断。").With("stateLabel", a.S("stateLabel"));
@@ -356,8 +412,8 @@ namespace PBZ.Native
                 { "luxiaokui", Killed("BP_Monster_MuXiaoKui") == true || Killed("BP_Monster_MuXiaoKui_P2") == true },
                 { "lu-well", Done("MainCh1-ShiXinCun") == true }, { "qixing", Tags.Contains("achievment.剑横北斗.完成") },
                 { "chivalry", Done("BuMieXiaDan") == true }, { "mirage", Rank >= 7 },
-                { "sanmian", Done("SanMianHunDun") == true }, { "snow", Done("GeJueXieZi") == true && Done("QuanXin") == true },
-                { "crusher", Tags.Contains("dhy.Seq113.力者入战") }
+                { "sanmian", Done("SanMianHunDun") == true },
+                { "crusher", StageInfo.S("crusherEntry") != "" }
             };
             return Guides.Rows("checkpoints").Select(g =>
             {
@@ -376,7 +432,8 @@ namespace PBZ.Native
                     if (rule.S("check") == "achievement") title = "核对" + Achievements.FirstOrDefault(a => a.S("id") == rule.S("achievement")).S("name").Or(rule.S("achievement"));
                     string[] achievements = rule.Get("achievements") == null ? Guides.Get("questAchievements").Strings(quest) : rule.Strings("achievements");
                     string label = result.S("stateLabel").Or(result.S("mode") == "manual" ? "需现场核对" : Guides.Get("STATE_LABELS").S(result.S("state")));
-                    return result.With("title", title, "available", available && (id != "treasures" || Rank >= TreasureRank(rule.S("branch"))),
+                    return result.With("title", title, "available", available && (id != "treasures" || Rank >= TreasureRank(rule.S("branch"))) &&
+                        (id != "crusher-reward" || CuiDelivered),
                         "stateLabel", label, "achievements", achievements,
                         "source", result.S("source").Or(g.S("source")),
                         "current", rule.S("check") == "bai-xue" ? new string[0] : Quest(quest).Rows("QuestBranches").Where(b => b.S("BranchType") == "EBranchType::BranchActivating")
@@ -404,8 +461,10 @@ namespace PBZ.Native
                 string status = QuestRules.State(record);
                 Row failure = QuestFailure(id, record, status);
                 status = failure.S("state").Or(status);
+                bool archived = id == "FengChe" ? status != "done" : record == null && failure == null;
                 return Data.Make("id", id, "name", info.S("name").Or(id), "type", type, "branches", branches, "state", status,
-                    "stateLabel", Guides.Get("STATE_LABELS").S(status), "recorded", record != null, "definitions", info.Get("branches"), "failure", failure);
+                    "stateLabel", Guides.Get("STATE_LABELS").S(status), "recorded", record != null, "failure", failure,
+                    "catalogNote", archived ? Guides.Get("questArchive").S(id) : "");
             }).Where(q => q.S("type") != "Tutorial" && q.S("type") != "Quest_Branchline").ToArray();
         }
     }

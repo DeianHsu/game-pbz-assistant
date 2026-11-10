@@ -56,6 +56,8 @@ for (const [index, account] of old.accounts.entries()) for (const state of accou
   rows('region totals', slot, state.collections.regions.map(r => [r.id, r.done, r.total]), next.regions.map(r => r.slice(0, 3)));
   rows('map points', slot, state.collections.regions.flatMap(r => r.points.map(p => [p.key, p.name, p.state, p.access.state])), next.regions.flatMap(r => r[3]));
   rows('collectibles', slot, state.collectibles.items.map(i => [i.key, i.state, i.access.state]), next.collectibles);
+  rows('tempering', slot, state.collectibles.items.filter(i => i.temper).map(({ key, temper: t }) =>
+    [key, t.state, t.material, t.form, t.regionIds, t.bell, t.steps]), next.tempering);
   rows('achievements', slot, state.achievements.rows.map(a => [a.id, a.state, a.progress?.value ?? null]), next.achievements);
   rows('treasures', slot, state.achievements.treasures.map(t => [t.branch, t.handedIn, t.collected]), next.treasures);
   rows('quest offers', slot, state.quests.filter(q => q.canAccept).map(q => {
@@ -63,10 +65,16 @@ for (const [index, account] of old.accounts.entries()) for (const state of accou
     return [q.id, q.stateLabel, t.area, t.person, t.place, t.bell, t.next];
   }), next.questOffers);
   rows('quest targets', slot, state.quests.map(q => [q.id, q.state, q.navigation.riskLevel,
-    q.navigation.targets.map(t => [t.mapId, t.person, t.access.state])]), next.quests);
+    q.navigation.targets.map(t => [t.mapId, t.person, t.access.state]), q.stateLabel, q.catalogNote]), next.quests);
 }
 if (!Array.isArray(native.pages) || native.pages.length !== 7 || native.pages.some(count => !Number.isInteger(count) || count < 0))
   issues.push({ scope: 'pages', actual: native.pages });
+const filtered = native.filteredPages;
+const selected = old.accounts[0]?.states.find(s => s.selectedSlot === filtered?.slot);
+if (selected) {
+  compare('page filters', filtered.slot, 'tempering', selected.collectibles.items.filter(i => i.temper?.state === 'pending').length, filtered.tempering);
+  compare('page filters', filtered.slot, 'quest archive', selected.quests.filter(q => q.catalogNote).length, filtered.questArchive);
+} else issues.push({ scope: 'page filters', actual: filtered });
 console.log(JSON.stringify({ accounts: native.accounts, slots: native.slots, checks: total, pageRows: native.pages, differences: issues.length,
   samples: issues.slice(0, 12) }, null, 2));
 if (issues.length) process.exitCode = 1;

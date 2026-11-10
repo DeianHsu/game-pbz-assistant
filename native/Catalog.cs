@@ -20,11 +20,14 @@ namespace PBZ.Native
         public readonly Row[] ScenePickups;
         public readonly List<string> Warnings = new List<string>();
         public readonly Dictionary<string, string> Localization;
+        readonly Dictionary<string, string> bells = new Dictionary<string, string>();
 
         public Catalog(string game)
         {
             var archive = new IoArchive(game);
             Localization = ReadLocalization(new PakArchive(game).ReadFile("ProjectPBZ/Content/Localization/Game/zh-Hans/Game.locres"));
+            try { bells = MapCatalog.BellNames(archive, this); }
+            catch (Exception) { Warnings.Add("铃铛名称表未识别，使用本地化名称。"); }
             foreach (string file in archive.Files.Keys.Where(file => Regex.IsMatch(file, @"/PBZQuest/[^/]+/[^/]+\.uasset$")))
                 Quests.Add(ReadQuest(file, archive.ReadFile(file)));
             Achievements = Names(archive.ReadFile(Root + "DataTable/DT_Achievement.uasset"))
@@ -51,6 +54,11 @@ namespace PBZ.Native
         {
             string value;
             return key != null && Localization.TryGetValue(key, out value) ? value : "";
+        }
+        public string BellName(string id)
+        {
+            string name;
+            return id != null && bells.TryGetValue(id, out name) ? name : Local(id);
         }
         public Row Item(string category, string id)
         {
